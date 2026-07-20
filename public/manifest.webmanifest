@@ -1,0 +1,17 @@
+{
+  "name": "Nachprüfung Lerntrainer 2026",
+  "short_name": "Lerntrainer",
+  "description": "Portfolio Management und German & International Taxation lernen.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#faf7f1",
+  "theme_color": "#071e35",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
