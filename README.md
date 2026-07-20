@@ -1,0 +1,3 @@
+# StudyHelper
+
+Initialisierung des Lerntrainers.
