@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { flashcards, modelOverviews, quizQuestions } from "@/lib/data";
+import { flashcards, learningVideos, modelOverviews, quizQuestions } from "@/lib/data";
 import {
   addAnswer,
   defaultProgress,
@@ -22,7 +22,7 @@ import type {
   Subject,
 } from "@/lib/types";
 
-type View = "dashboard" | "cards" | "quiz" | "models" | "exam";
+type View = "dashboard" | "cards" | "quiz" | "models" | "videos" | "exam";
 
 const subjectName: Record<Subject, string> = {
   portfolio: "Portfolio Management",
@@ -44,6 +44,7 @@ const navItems: { view: View; label: string; icon: string }[] = [
   { view: "cards", label: "Karteikarten", icon: "▱" },
   { view: "quiz", label: "Quiz", icon: "?" },
   { view: "models", label: "Modelle", icon: "⌁" },
+  { view: "videos", label: "Video-Playlist", icon: "▶" },
   { view: "exam", label: "Prüfungsmodus", icon: "◇" },
 ];
 
@@ -171,6 +172,7 @@ export default function Home() {
         {view === "cards" && <Cards progress={progress} setProgress={setProgress} />}
         {view === "quiz" && <Quiz setProgress={setProgress} />}
         {view === "models" && <Models />}
+        {view === "videos" && <Videos />}
         {view === "exam" && <Exam progress={progress} setProgress={setProgress} />}
         <footer className="app-footer">
           <span>Lokaler Lernstand · keine Anmeldung</span>
@@ -383,6 +385,74 @@ function Models() {
     <div className="subject-tabs"><button className={subject === "portfolio" ? "active" : ""} onClick={() => setSubject("portfolio")}>Portfolio Management</button><button className={subject === "tax" ? "active" : ""} onClick={() => setSubject("tax")}>Taxation</button></div>
     <div className="models-grid">{modelOverviews.filter((item) => item.subject === subject).map((model) => <article className={open === model.id ? "model-card open" : "model-card"} key={model.id}><button onClick={() => setOpen(open === model.id ? "" : model.id)}><div><span>{subject === "portfolio" ? "◎" : "§"}</span><h2>{model.title}</h2></div><b>{open === model.id ? "−" : "+"}</b></button>{open === model.id && <div className="model-content"><p>{model.summary}</p>{model.formula && <div className="formula-box">{model.formula}</div>}<h3>Prüfungs-Check</h3><ol>{model.checkpoints.map((item) => <li key={item}>{item}</li>)}</ol><SourceBadge source={model.source} /></div>}</article>)}</div>
   </section>;
+}
+
+function Videos() {
+  const [subject, setSubject] = useState<Subject>("portfolio");
+  const [topic, setTopic] = useState("all");
+  const topics = [...new Set(learningVideos.filter((video) => video.subject === subject).map((video) => video.topic))];
+  const filtered = learningVideos.filter((video) => video.subject === subject && (topic === "all" || video.topic === topic));
+  const grouped = topics
+    .map((item) => ({ topic: item, videos: filtered.filter((video) => video.topic === item) }))
+    .filter((group) => group.videos.length);
+
+  return (
+    <section className="page video-page">
+      <PageHeading
+        eyebrow="KURATIERTE ERKLÄRVIDEOS"
+        title="Video-Playlist"
+        description="Pro Prüfungsthema ein gezielt ausgewähltes Kernvideo; bei rechen- oder fallintensiven Themen ergänzt um eine Vertiefung. Auswahl nach Themenpassung, fachlichem Profil und sichtbarer Resonanz."
+      />
+      <div className="video-toolbar">
+        <div className="subject-tabs" aria-label="Fach auswählen">
+          <button className={subject === "portfolio" ? "active" : ""} onClick={() => { setSubject("portfolio"); setTopic("all"); }}>Portfolio Management</button>
+          <button className={subject === "tax" ? "active" : ""} onClick={() => { setSubject("tax"); setTopic("all"); }}>Taxation</button>
+        </div>
+        <label>
+          <span>Thema filtern</span>
+          <select value={topic} onChange={(event) => setTopic(event.target.value)}>
+            <option value="all">Alle Themen</option>
+            {topics.map((item) => <option key={item}>{item}</option>)}
+          </select>
+        </label>
+      </div>
+      <aside className="video-method" aria-label="Hinweis zur Auswahl">
+        <span aria-hidden="true">✓</span>
+        <div>
+          <strong>Geprüft am 20.07.2026</strong>
+          <p>Likes und Aufrufe sind nur ein Qualitätssignal; entscheidend war die Passung zu deinen Unterlagen. Bei Steuerrecht gelten im Zweifel Kursunterlagen und aktueller Gesetzesstand.</p>
+        </div>
+      </aside>
+      <div className="video-groups">
+        {grouped.map((group, groupIndex) => (
+          <section className="video-topic-group" key={group.topic}>
+            <div className="video-topic-heading">
+              <span>{String(groupIndex + 1).padStart(2, "0")}</span>
+              <div><p>{subjectName[subject]}</p><h2>{group.topic}</h2></div>
+              <small>{group.videos.length === 1 ? "1 Video" : `${group.videos.length} Videos`}</small>
+            </div>
+            <div className="video-grid">
+              {group.videos.map((video) => (
+                <article className="video-card" key={video.id}>
+                  <div className="video-card-top">
+                    <span className="video-play" aria-hidden="true">▶</span>
+                    <div className="video-tags"><span>{video.level}</span><span>{video.language}</span></div>
+                  </div>
+                  <h3>{video.title}</h3>
+                  <p className="video-creator">{video.creator}</p>
+                  <p className="video-reason">{video.reason}</p>
+                  <div className="video-signal"><span aria-hidden="true">↗</span>{video.signal}</div>
+                  <a href={video.url} target="_blank" rel="noopener noreferrer" aria-label={`${video.title} auf YouTube öffnen`}>
+                    Auf YouTube ansehen <span aria-hidden="true">↗</span>
+                  </a>
+                </article>
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function Exam({ progress, setProgress }: { progress: AppProgress; setProgress: React.Dispatch<React.SetStateAction<AppProgress>> }) {

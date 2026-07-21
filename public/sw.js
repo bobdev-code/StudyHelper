@@ -1,4 +1,4 @@
-const CACHE = "nachpruefung-lerntrainer-v1";
+const CACHE = "nachpruefung-lerntrainer-v2";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(["/", "/manifest.webmanifest", "/favicon.svg"])).catch(() => undefined));
