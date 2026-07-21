@@ -1,4 +1,5 @@
 export type Subject = "portfolio" | "tax";
+export type Language = "de" | "en";
 
 export type SourceRef = {
   document: string;
@@ -110,6 +111,7 @@ export type AppProgress = {
   settings: {
     dailyMinutes: number;
     examDate: string;
+    language?: Language;
   };
 };
 

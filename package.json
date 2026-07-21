@@ -17,6 +17,7 @@
     "db:generate": "bash scripts/sites-env.sh -- drizzle-kit generate"
   },
   "dependencies": {
+    "@supabase/supabase-js": "2.110.8",
     "drizzle-orm": "0.45.2",
     "next": "16.2.6",
     "react": "19.2.6",
@@ -41,5 +42,5 @@
     "wrangler": "4.92.0"
   },
   "type": "module",
-  "displayName": "Nachpr\u00fcfung Lerntrainer 2026"
+  "displayName": "Nachprüfung Lerntrainer 2026"
 }

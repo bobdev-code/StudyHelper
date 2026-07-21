@@ -66,3 +66,4 @@ export const detectiveCases = [
   {id:"jensen",title:"Alpha-Vorzeichen vertauscht",lines:["CAPM-Anforderung = 9%", "Tatsächliche Rendite = 11%", "α = 9% − 11% = −2%"],wrong:2,why:"Jensen Alpha ist tatsächliche minus geforderte Rendite, hier +2%."},
   {id:"beta",title:"Beta als Gesamtrisiko",lines:["βₚ = 1,2", "Das Portfolio hat eine Volatilität von 120%."],wrong:1,why:"Beta misst Marktsensitivität/systematisches Risiko, nicht die Standardabweichung."},
 ];
+

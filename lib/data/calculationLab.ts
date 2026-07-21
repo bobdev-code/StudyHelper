@@ -43,3 +43,4 @@ export function createLabTasks(seed = Date.now()): LabTask[] {
 }
 
 export const labErrorByStage: Record<string, ErrorType> = { formula:"falsche Formel", prediction:"Interpretation fehlt", steps:"Rechenfehler", interpretation:"Interpretation fehlt" };
+

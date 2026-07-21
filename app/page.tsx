@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import type { User } from "@supabase/supabase-js";
 import { flashcards, learningVideos, modelOverviews, quizQuestions } from "@/lib/data";
 import {
   addAnswer,
@@ -18,12 +19,14 @@ import type {
   ErrorType,
   ExamSession,
   Flashcard,
+  Language,
   QuizQuestion,
   Subject,
 } from "@/lib/types";
 import { PortfolioAcademy } from "./portfolioAcademy";
 import { createLabTasks, labErrorByStage, type LabTask } from "@/lib/data/calculationLab";
 import { taxCases, taxCaseErrorByStep, type TaxCase } from "@/lib/data/taxCaseLab";
+import { getRememberMe, getSupabase, setRememberMe } from "@/lib/supabase";
 
 type View = "dashboard" | "plan" | "cards" | "quiz" | "trainer" | "errors" | "models" | "videos" | "exam";
 
@@ -42,17 +45,21 @@ const errorTypes: ErrorType[] = [
   "Flüchtigkeitsfehler",
 ];
 
-const navItems: { view: View; label: string; icon: string }[] = [
-  { view: "dashboard", label: "Dashboard", icon: "▦" },
-  { view: "plan", label: "Tagesplan", icon: "✓" },
-  { view: "cards", label: "Karteikarten", icon: "▱" },
-  { view: "quiz", label: "Diagnose & Quiz", icon: "?" },
-  { view: "trainer", label: "Fachtrainer", icon: "∑" },
-  { view: "errors", label: "Fehlerbuch", icon: "!" },
-  { view: "models", label: "Modelle", icon: "⌁" },
-  { view: "videos", label: "Video-Playlist", icon: "▶" },
-  { view: "exam", label: "Prüfungsmodus", icon: "◇" },
+const navItems: { view: View; de: string; en: string; icon: string }[] = [
+  { view: "dashboard", de: "Dashboard", en: "Dashboard", icon: "▦" },
+  { view: "plan", de: "Tagesplan", en: "Daily plan", icon: "✓" },
+  { view: "cards", de: "Karteikarten", en: "Flashcards", icon: "▱" },
+  { view: "quiz", de: "Diagnose & Quiz", en: "Assessment & quiz", icon: "?" },
+  { view: "trainer", de: "Fachtrainer", en: "Subject training", icon: "∑" },
+  { view: "errors", de: "Fehlerbuch", en: "Error log", icon: "!" },
+  { view: "models", de: "Modelle", en: "Models", icon: "⌁" },
+  { view: "videos", de: "Video-Playlist", en: "Video playlist", icon: "▶" },
+  { view: "exam", de: "Prüfungsmodus", en: "Exam mode", icon: "◇" },
 ];
+
+const LanguageContext = createContext<Language>("de");
+const useLanguage = () => useContext(LanguageContext);
+const tr = (language: Language, de: string, en: string) => language === "de" ? de : en;
 
 function uid(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -119,6 +126,16 @@ export default function Home() {
   const [progress, setProgress] = useState<AppProgress>(defaultProgress);
   const [ready, setReady] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [cloudReady, setCloudReady] = useState(false);
+  const [cloudState, setCloudState] = useState<"offline" | "syncing" | "synced" | "error">("offline");
+  const progressRef = useRef(progress);
+  const language: Language = progress.settings.language ?? "de";
+
+  useEffect(() => {
+    progressRef.current = progress;
+  }, [progress]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -138,6 +155,65 @@ export default function Home() {
     if (ready) saveProgress(progress);
   }, [progress, ready]);
 
+  useEffect(() => {
+    const supabase = getSupabase();
+    supabase.auth.getSession().then(({ data }) => setUser(data.session?.user ?? null));
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+      if (!session) {
+        setCloudReady(false);
+        setCloudState("offline");
+      }
+    });
+    return () => data.subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!ready || !user) return;
+    let cancelled = false;
+    queueMicrotask(() => !cancelled && setCloudState("syncing"));
+    getSupabase().from("learning_progress").select("progress").eq("user_id", user.id).maybeSingle()
+      .then(async ({ data, error }) => {
+        if (cancelled) return;
+        if (error) throw error;
+        if (data?.progress) {
+          setProgress(data.progress as AppProgress);
+        } else {
+          const { error: uploadError } = await getSupabase().from("learning_progress").insert({ user_id: user.id, progress: progressRef.current });
+          if (uploadError) throw uploadError;
+        }
+        if (!cancelled) {
+          setCloudReady(true);
+          setCloudState("synced");
+        }
+      })
+      .catch(() => !cancelled && setCloudState("error"));
+    return () => { cancelled = true; };
+  }, [ready, user]);
+
+  useEffect(() => {
+    if (!ready || !user || !cloudReady) return;
+    const timer = window.setTimeout(async () => {
+      setCloudState("syncing");
+      const { error } = await getSupabase().from("learning_progress").upsert({
+        user_id: user.id,
+        progress,
+        updated_at: new Date().toISOString(),
+      });
+      setCloudState(error ? "error" : "synced");
+    }, 650);
+    return () => window.clearTimeout(timer);
+  }, [progress, ready, user, cloudReady]);
+
+  useEffect(() => {
+    document.documentElement.lang = language;
+  }, [language]);
+
+  const setLanguage = (next: Language) => setProgress((current) => ({
+    ...current,
+    settings: { ...current.settings, language: next },
+  }));
+
   const navigate = (next: View) => {
     setView(next);
     setMobileNav(false);
@@ -145,11 +221,11 @@ export default function Home() {
   };
 
   return (
-    <div className="app-shell">
+    <LanguageContext.Provider value={language}><div className="app-shell">
       <aside className={mobileNav ? "sidebar open" : "sidebar"}>
         <div className="brand">
           <span className="brand-mark">L</span>
-          <div><strong>Lerntrainer</strong><small>Nachprüfung 2026</small></div>
+          <div><strong>{tr(language,"Lerntrainer","StudyHelper")}</strong><small>{tr(language,"Nachprüfung 2026","Resit exam 2026")}</small></div>
         </div>
         <nav aria-label="Hauptnavigation">
           {navItems.map((item) => (
@@ -158,22 +234,32 @@ export default function Home() {
               className={view === item.view ? "nav-item active" : "nav-item"}
               onClick={() => navigate(item.view)}
             >
-              <span aria-hidden="true">{item.icon}</span>{item.label}
+              <span aria-hidden="true">{item.icon}</span>{item[language]}
             </button>
           ))}
         </nav>
         <div className="sidebar-footer">
           <span className="pulse-dot" />
-          <div><strong>04. August 2026</strong><small>Dein Fortschritt zählt.</small></div>
+          <div><strong>{tr(language,"04. August 2026","4 August 2026")}</strong><small>{tr(language,"Dein Fortschritt zählt.","Every step counts.")}</small></div>
         </div>
       </aside>
 
       <main className="main-content">
         <header className="mobile-header">
           <button className="menu-button" onClick={() => setMobileNav((value) => !value)} aria-label="Menü öffnen">☰</button>
-          <strong>Lerntrainer 2026</strong>
-          <span>{daysUntil(progress.settings.examDate)} T</span>
+          <strong>{tr(language,"Lerntrainer 2026","StudyHelper 2026")}</strong>
+          <button className="mobile-account-button" onClick={() => setAuthOpen(true)} aria-label={tr(language,"Konto öffnen","Open account")}>{user ? "✓" : "♙"}</button>
         </header>
+        <div className="top-actions">
+          <div className="language-switch" role="group" aria-label={tr(language,"Sprache wählen","Choose language")}>
+            <button className={language === "de" ? "active" : ""} onClick={() => setLanguage("de")} aria-pressed={language === "de"}><span className="flag-icon flag-de" aria-hidden="true" /> DE</button>
+            <button className={language === "en" ? "active" : ""} onClick={() => setLanguage("en")} aria-pressed={language === "en"}><span className="flag-icon flag-gb" aria-hidden="true" /> EN</button>
+          </div>
+          <button className="account-button" onClick={() => setAuthOpen(true)}>
+            <span className={`sync-dot ${cloudState}`} />
+            {user ? (user.user_metadata?.display_name || user.email) : tr(language,"Anmelden","Sign in")}
+          </button>
+        </div>
         {view === "dashboard" && <Dashboard progress={progress} navigate={navigate} />}
         {view === "plan" && <DailyPlan progress={progress} navigate={navigate} />}
         {view === "cards" && <Cards progress={progress} setProgress={setProgress} />}
@@ -184,19 +270,77 @@ export default function Home() {
         {view === "videos" && <Videos />}
         {view === "exam" && <Exam progress={progress} setProgress={setProgress} />}
         <footer className="app-footer">
-          <span>Lokaler Lernstand · keine Anmeldung</span>
+          <span>{user ? tr(language, cloudState === "synced" ? "Cloud-Lernstand synchronisiert" : cloudState === "error" ? "Synchronisierung fehlgeschlagen" : "Cloud-Lernstand wird synchronisiert …", cloudState === "synced" ? "Cloud progress synced" : cloudState === "error" ? "Sync failed" : "Syncing cloud progress …") : tr(language,"Lokaler Lernstand · für Gerätewechsel anmelden","Local progress · sign in to use other devices")}</span>
           <button
             className="text-button danger"
             onClick={() => {
-              if (window.confirm("Wirklich den gesamten Lernstand zurücksetzen?")) {
+              if (window.confirm(tr(language,"Wirklich den gesamten Lernstand zurücksetzen?","Reset all learning progress?"))) {
                 setProgress(resetProgress());
               }
             }}
-          >Lernstand zurücksetzen</button>
+          >{tr(language,"Lernstand zurücksetzen","Reset progress")}</button>
         </footer>
+        {authOpen && <AuthDialog user={user} language={language} onClose={() => setAuthOpen(false)} />}
       </main>
-    </div>
+    </div></LanguageContext.Provider>
   );
+}
+
+function AuthDialog({ user, language, onClose }: { user: User | null; language: Language; onClose: () => void }) {
+  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [remember, setRemember] = useState(getRememberMe());
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setMessage("");
+    setRememberMe(remember);
+    const supabase = getSupabase();
+    const result = mode === "login"
+      ? await supabase.auth.signInWithPassword({ email, password })
+      : await supabase.auth.signUp({ email, password, options: { data: { display_name: displayName } } });
+    setBusy(false);
+    if (result.error) setMessage(result.error.message);
+    else if (mode === "signup" && !result.data.session) setMessage(tr(language,"Bitte bestätige die E-Mail und melde dich danach an.","Please confirm the email, then sign in."));
+    else onClose();
+  };
+
+  const signOut = async () => {
+    setBusy(true);
+    await getSupabase().auth.signOut();
+    setBusy(false);
+    onClose();
+  };
+
+  return <div className="auth-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <section className="auth-dialog" role="dialog" aria-modal="true" aria-label={tr(language,"Lernkonto","Learning account")}>
+      <button className="auth-close" onClick={onClose} aria-label={tr(language,"Schließen","Close")}>×</button>
+      {user ? <>
+        <span className="auth-kicker">{tr(language,"CLOUD-LERNKONTO","CLOUD LEARNING ACCOUNT")}</span>
+        <h2>{user.user_metadata?.display_name || user.email}</h2>
+        <p>{tr(language,"Dein Lernstand wird auf diesem und deinen anderen Geräten synchronisiert.","Your progress is synced on this device and your other devices.")}</p>
+        <button className="secondary-button" disabled={busy} onClick={signOut}>{tr(language,"Abmelden","Sign out")}</button>
+      </> : <>
+        <span className="auth-kicker">{tr(language,"GERÄTEÜBERGREIFEND LERNEN","LEARN ACROSS DEVICES")}</span>
+        <h2>{mode === "login" ? tr(language,"Willkommen zurück","Welcome back") : tr(language,"Eigenes Lernkonto erstellen","Create your learning account")}</h2>
+        <p>{tr(language,"Bobby und Patrick erhalten vollständig getrennte, persönliche Lernstände.","Bobby and Patrick each get a completely separate personal learning record.")}</p>
+        <div className="auth-tabs"><button className={mode === "login" ? "active" : ""} onClick={() => setMode("login")}>{tr(language,"Anmelden","Sign in")}</button><button className={mode === "signup" ? "active" : ""} onClick={() => setMode("signup")}>{tr(language,"Registrieren","Register")}</button></div>
+        <form onSubmit={submit}>
+          {mode === "signup" && <label>{tr(language,"Name","Name")}<input required value={displayName} onChange={(e) => setDisplayName(e.target.value)} autoComplete="name" /></label>}
+          <label>{tr(language,"E-Mail","Email")}<input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" /></label>
+          <label>{tr(language,"Passwort (mindestens 6 Zeichen)","Password (at least 6 characters)")}<input required minLength={6} type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete={mode === "login" ? "current-password" : "new-password"} /></label>
+          <label className="remember-row"><input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> <span>{tr(language,"Angemeldet bleiben","Remember me")}</span></label>
+          {message && <p className="auth-message">{message}</p>}
+          <button className="primary-button" disabled={busy}>{busy ? tr(language,"Bitte warten …","Please wait …") : mode === "login" ? tr(language,"Anmelden","Sign in") : tr(language,"Konto erstellen","Create account")}</button>
+        </form>
+      </>}
+    </section>
+  </div>;
 }
 
 function Dashboard({ progress, navigate }: { progress: AppProgress; navigate: (view: View) => void }) {
@@ -280,6 +424,7 @@ function SubjectCard({ subject, score, accuracy, priority = false }: { subject: 
 }
 
 function Cards({ progress, setProgress }: { progress: AppProgress; setProgress: React.Dispatch<React.SetStateAction<AppProgress>> }) {
+  const language = useLanguage();
   const [subject, setSubject] = useState<Subject | "all">("portfolio");
   const [topic, setTopic] = useState("all");
   const [query, setQuery] = useState("");
@@ -311,23 +456,23 @@ function Cards({ progress, setProgress }: { progress: AppProgress; setProgress: 
 
   return (
     <section className="page">
-      <PageHeading eyebrow="SPACED REPETITION" title="Karteikarten" description={`${flashcards.filter((item) => item.subject === "portfolio").length} Portfolio- und ${flashcards.filter((item) => item.subject === "tax").length} Taxation-Karten mit Quellenreferenz.`} />
+      <PageHeading eyebrow="SPACED REPETITION" title={tr(language,"Karteikarten","Flashcards")} description={tr(language,`${flashcards.filter((item) => item.subject === "portfolio").length} Portfolio- und ${flashcards.filter((item) => item.subject === "tax").length} Taxation-Karten mit Quellenreferenz.`,`${flashcards.filter((item) => item.subject === "portfolio").length} portfolio and ${flashcards.filter((item) => item.subject === "tax").length} taxation cards with source references.`)} />
       <div className="toolbar">
-        <select value={subject} onChange={(event) => { setSubject(event.target.value as Subject | "all"); setTopic("all"); setIndex(0); setFlipped(false); }}><option value="portfolio">Portfolio Management</option><option value="tax">Taxation</option><option value="all">Beide Fächer</option></select>
-        <select value={topic} onChange={(event) => { setTopic(event.target.value); setIndex(0); setFlipped(false); }}><option value="all">Alle Themen</option>{topics.map((item) => <option key={item}>{item}</option>)}</select>
-        <input value={query} onChange={(event) => { setQuery(event.target.value); setIndex(0); setFlipped(false); }} placeholder="Karten durchsuchen …" />
-        <button className={favorites ? "filter-button active" : "filter-button"} onClick={() => { setFavorites((value) => !value); setIndex(0); setFlipped(false); }}>★ Favoriten</button>
+        <select value={subject} onChange={(event) => { setSubject(event.target.value as Subject | "all"); setTopic("all"); setIndex(0); setFlipped(false); }}><option value="portfolio">Portfolio Management</option><option value="tax">Taxation</option><option value="all">{tr(language,"Beide Fächer","Both subjects")}</option></select>
+        <select value={topic} onChange={(event) => { setTopic(event.target.value); setIndex(0); setFlipped(false); }}><option value="all">{tr(language,"Alle Themen","All topics")}</option>{topics.map((item) => <option key={item}>{item}</option>)}</select>
+        <input value={query} onChange={(event) => { setQuery(event.target.value); setIndex(0); setFlipped(false); }} placeholder={tr(language,"Karten durchsuchen …","Search cards …")} />
+        <button className={favorites ? "filter-button active" : "filter-button"} onClick={() => { setFavorites((value) => !value); setIndex(0); setFlipped(false); }}>★ {tr(language,"Favoriten","Favourites")}</button>
       </div>
       {card ? (
         <div className="study-layout">
           <div className="card-stage">
             <div className="card-meta"><span>{subjectName[card.subject]}</span><strong>{index + 1} / {filtered.length}</strong><span>Box {progress.cards[card.id]?.box ?? 1}</span></div>
             <button className={flipped ? "flashcard flipped" : "flashcard"} onClick={() => setFlipped((value) => !value)}>
-              <span className="card-label">{flipped ? "ANTWORT" : card.topic.toUpperCase()}</span>
-              <div>{flipped ? <><p className="card-answer">{card.back}</p>{card.helpDe && <p className="german-help">Verständnishilfe: {card.helpDe}</p>}</> : <h2>{card.front}</h2>}</div>
-              <span className="flip-hint">{flipped ? "Zurück zur Frage" : "Tippen zum Aufdecken"}</span>
+              <span className="card-label">{flipped ? tr(language,"ANTWORT","ANSWER") : card.topic.toUpperCase()}</span>
+              <div>{flipped ? <><p className="card-answer">{card.back}</p>{language === "de" && card.helpDe && <p className="german-help">Verständnishilfe: {card.helpDe}</p>}</> : <><h2>{card.front}</h2>{language === "de" && card.helpDe && <p className="german-help">Deutsch: {card.helpDe}</p>}</>}</div>
+              <span className="flip-hint">{flipped ? tr(language,"Zurück zur Frage","Back to question") : tr(language,"Tippen zum Aufdecken","Tap to reveal")}</span>
             </button>
-            {flipped && <div className="review-buttons"><button className="wrong" onClick={() => review("wrong")}>Nicht gewusst</button><button className="unsure" onClick={() => review("uncertain")}>Unsicher</button><button className="known" onClick={() => review("known")}>Gewusst</button></div>}
+            {flipped && <div className="review-buttons"><button className="wrong" onClick={() => review("wrong")}>{tr(language,"Nicht gewusst","Did not know")}</button><button className="unsure" onClick={() => review("uncertain")}>{tr(language,"Unsicher","Unsure")}</button><button className="known" onClick={() => review("known")}>{tr(language,"Gewusst","Knew it")}</button></div>}
             <div className="card-actions"><button className="text-button" onClick={() => setIndex((value) => (value - 1 + filtered.length) % filtered.length)}>← Vorherige</button><button className={progress.cards[card.id]?.favorite ? "favorite active" : "favorite"} onClick={toggleFavorite}>★ {progress.cards[card.id]?.favorite ? "Favorit" : "Merken"}</button><button className="text-button" onClick={() => { setFlipped(false); setIndex((value) => (value + 1) % filtered.length); }}>Nächste →</button></div>
           </div>
           <aside className="study-sidebar"><h3>Lernlogik</h3><p>Gewusste Karten wandern in längere Intervalle. Unsichere Karten kommen morgen, falsche Karten sofort wieder in Box 1.</p><div className="due-stat"><strong>{Object.values(progress.cards).filter((item) => new Date(item.dueAt) <= new Date()).length}</strong><span>heute fällig</span></div><SourceBadge source={card.source} /></aside>
@@ -338,6 +483,7 @@ function Cards({ progress, setProgress }: { progress: AppProgress; setProgress: 
 }
 
 function Quiz({ setProgress }: { setProgress: React.Dispatch<React.SetStateAction<AppProgress>> }) {
+  const language = useLanguage();
   const [subject, setSubject] = useState<Subject | "all">("portfolio");
   const [diagnostic, setDiagnostic] = useState(false);
   const [session, setSession] = useState<QuizQuestion[]>([]);
@@ -386,7 +532,7 @@ function Quiz({ setProgress }: { setProgress: React.Dispatch<React.SetStateActio
   }
 
   if (!question) return (
-    <section className="page"><PageHeading eyebrow="AKTIVES ABRUFEN" title="Quiz" description="Englische Prüfungsfragen, sofortiges Feedback und persönliches Fehlerprotokoll." />
+    <section className="page"><PageHeading eyebrow={tr(language,"AKTIVES ABRUFEN","ACTIVE RECALL")} title="Quiz" description={tr(language,"Prüfungsfragen mit deutscher Verständnishilfe, sofortigem Feedback und persönlichem Fehlerprotokoll.","Exam questions with immediate feedback and a personal error log.")} />
       <div className="setup-grid three"><article className={`setup-card ${subject === "portfolio" ? "selected" : ""}`} onClick={() => setSubject("portfolio")}><span>◎</span><h2>Portfolio Management</h2><p>{quizQuestions.filter((item) => item.subject === "portfolio").length} geprüfte Fragen</p></article><article className={`setup-card ${subject === "tax" ? "selected tax" : ""}`} onClick={() => setSubject("tax")}><span>§</span><h2>Taxation</h2><p>{quizQuestions.filter((item) => item.subject === "tax").length} geprüfte Fragen</p></article><article className={`setup-card ${subject === "all" ? "selected combined" : ""}`} onClick={() => { setSubject("all"); setDiagnostic(true); }}><span>◫</span><h2>Gesamtdiagnose</h2><p>18 Fragen aus beiden Fächern</p></article></div>
       <div className="quiz-start panel"><label className="switch-row"><input type="checkbox" checked={diagnostic} onChange={(event) => setDiagnostic(event.target.checked)} /><span><strong>Adaptiver Diagnosetest</strong><small>{subject === "all" ? "18" : "12"} breit gestreute Fragen mit Sicherheitsabgleich</small></span></label><button className="primary-button" onClick={start}>{diagnostic ? "Diagnosetest starten" : "12 Fragen starten"} →</button></div>
     </section>
@@ -396,10 +542,10 @@ function Quiz({ setProgress }: { setProgress: React.Dispatch<React.SetStateActio
     <section className="page quiz-page">
       <div className="quiz-progress"><span style={{ width: `${((index + 1) / session.length) * 100}%` }} /></div>
       <div className="quiz-top"><span>{subjectName[question.subject]} · {question.topic}</span><strong>Frage {index + 1} / {session.length}</strong><span>{question.points} Punkte</span></div>
-      <article className="question-card"><span className="question-type">{question.type.replace("-", " ")}</span><h1>{question.prompt}</h1>
+      <article className="question-card"><span className="question-type">{question.type.replace("-", " ")}</span><h1>{question.prompt}</h1>{language === "de" && question.helpDe && <p className="german-help">Deutsch: {question.helpDe}</p>}
         <div className="options">{question.options.map((option, optionIndex) => <button key={option} disabled={checked} className={`${!Array.isArray(answer) && answer === optionIndex ? "selected" : ""} ${checked && !Array.isArray(question.correct) && question.correct === optionIndex ? "correct" : ""} ${checked && !Array.isArray(answer) && answer === optionIndex && !isCorrect(question, answer) ? "incorrect" : ""}`} onClick={() => setAnswer(optionIndex)}><span>{String.fromCharCode(65 + optionIndex)}</span>{option}</button>)}</div>
         {!checked && <div className="answer-meta"><label>Sicherheit<select value={confidence} onChange={(event) => setConfidence(event.target.value as Confidence)}><option value="low">niedrig</option><option value="medium">mittel</option><option value="high">hoch</option></select></label><label>Falls falsch: Fehlerart<select value={errorType} onChange={(event) => setErrorType(event.target.value as ErrorType)}>{errorTypes.map((item) => <option key={item}>{item}</option>)}</select></label></div>}
-        {checked && <div className={isCorrect(question, answer) ? "feedback correct-feedback" : "feedback wrong-feedback"}><h3>{isCorrect(question, answer) ? "Richtig." : "Noch nicht richtig."}</h3><p>{question.explanation}</p>{question.solutionSteps && <ol>{question.solutionSteps.map((step) => <li key={step}>{step}</li>)}</ol>}{question.helpDe && <p className="german-help">Verständnishilfe: {question.helpDe}</p>}<SourceBadge source={question.source} /></div>}
+        {checked && <div className={isCorrect(question, answer) ? "feedback correct-feedback" : "feedback wrong-feedback"}><h3>{isCorrect(question, answer) ? tr(language,"Richtig.","Correct.") : tr(language,"Noch nicht richtig.","Not quite.")}</h3><p>{question.explanation}</p>{question.solutionSteps && <ol>{question.solutionSteps.map((step) => <li key={step}>{step}</li>)}</ol>}{language === "de" && question.helpDe && <p className="german-help">Verständnishilfe: {question.helpDe}</p>}<SourceBadge source={question.source} /></div>}
         <div className="question-actions">{!checked ? <button className="primary-button" disabled={answer === undefined} onClick={check}>Antwort prüfen</button> : <button className="primary-button" onClick={next}>{index === session.length - 1 ? "Quiz beenden" : "Nächste Frage"} →</button>}</div>
       </article>
     </section>
