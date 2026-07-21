@@ -172,8 +172,9 @@ export default function Home() {
     if (!ready || !user) return;
     let cancelled = false;
     queueMicrotask(() => !cancelled && setCloudState("syncing"));
-    getSupabase().from("learning_progress").select("progress").eq("user_id", user.id).maybeSingle()
-      .then(async ({ data, error }) => {
+    void (async () => {
+      try {
+        const { data, error } = await getSupabase().from("learning_progress").select("progress").eq("user_id", user.id).maybeSingle();
         if (cancelled) return;
         if (error) throw error;
         if (data?.progress) {
@@ -186,8 +187,10 @@ export default function Home() {
           setCloudReady(true);
           setCloudState("synced");
         }
-      })
-      .catch(() => !cancelled && setCloudState("error"));
+      } catch {
+        if (!cancelled) setCloudState("error");
+      }
+    })();
     return () => { cancelled = true; };
   }, [ready, user]);
 
