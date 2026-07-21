@@ -21,6 +21,7 @@ import type {
   QuizQuestion,
   Subject,
 } from "@/lib/types";
+import { createLabTasks, labErrorByStage, type LabTask } from "@/lib/data/calculationLab";
 
 type View = "dashboard" | "plan" | "cards" | "quiz" | "trainer" | "errors" | "models" | "videos" | "exam";
 
@@ -403,7 +404,7 @@ function Quiz({ setProgress }: { setProgress: React.Dispatch<React.SetStateActio
   );
 }
 
-type TrainerMode = "calculation" | "tax-case" | "formula";
+type TrainerMode = "calculation" | "tax-case" | "formula" | "lab";
 
 function SubjectTrainer({ setProgress }: { setProgress: React.Dispatch<React.SetStateAction<AppProgress>> }) {
   const [mode, setMode] = useState<TrainerMode>();
@@ -412,10 +413,13 @@ function SubjectTrainer({ setProgress }: { setProgress: React.Dispatch<React.Set
   const [answer, setAnswer] = useState<number>();
   const [checked, setChecked] = useState(false);
   const [confidence, setConfidence] = useState<Confidence>("medium");
+  const [labTasks, setLabTasks] = useState<LabTask[]>([]);
+  const [labIndex, setLabIndex] = useState(0);
   const started = useRef(0);
   const question = questions[index];
 
   const startMode = (next: TrainerMode) => {
+    if (next === "lab") { setMode(next); setLabTasks(createLabTasks()); setLabIndex(0); return; }
     const filtered = quizQuestions.filter((item) => next === "calculation"
       ? item.subject === "portfolio" && item.type === "calculation"
       : next === "tax-case"
@@ -431,8 +435,16 @@ function SubjectTrainer({ setProgress }: { setProgress: React.Dispatch<React.Set
   };
   const next = () => { setIndex((value) => (value + 1) % Math.max(1, questions.length)); setAnswer(undefined); setChecked(false); setConfidence("medium"); started.current = Date.now(); };
 
-  if (!mode || !question) return <section className="page"><PageHeading eyebrow="GEZIELTE PRÜFUNGSROUTINE" title="Fachtrainer" description="Drei fokussierte Trainingsarten: Rechenwege für Portfolio, strukturierte Steuerfälle und schnelles Abrufen von Formeln beziehungsweise Normen." />
+  if (mode === "lab" && labTasks[labIndex]) return <CalculationLab task={labTasks[labIndex]} position={labIndex} total={labTasks.length} confidence={confidence} setConfidence={setConfidence} onExit={() => setMode(undefined)} onComplete={(errors) => {
+    const task = labTasks[labIndex]; const correct = errors.length === 0;
+    setProgress((current) => addAnswer(current, { id: uid("lab"), questionId: `lab-${task.id}-${Date.now()}`, subject: "portfolio", topic: task.topic, correct, durationMs: 0, confidence, errorType: correct ? undefined : labErrorByStage[errors[0]], answeredAt: new Date().toISOString() }));
+    setLabTasks((current) => correct ? current : [...current, createLabTasks(Date.now()+labIndex).find((item) => item.id === task.id)!]);
+    setLabIndex((value) => value + 1); setConfidence("medium");
+  }} />;
+
+  if (!mode || !question) return <section className="page"><PageHeading eyebrow="GEZIELTE PRÜFUNGSROUTINE" title="Fachtrainer" description="Vier fokussierte Trainingsarten: Rechenlabor, klassische Aufgaben, strukturierte Steuerfälle und schnelles Abrufen von Formeln beziehungsweise Normen." />
     <div className="trainer-grid">
+      <button className="trainer-card lab" onClick={() => startMode("lab")}><span>⌬</span><h2>Portfolio-Rechenlabor</h2><p>Formel erkennen, Werte zuordnen, Ergebnis vorhersagen, jeden Schritt rechnen und ökonomisch erklären.</p><b>7 adaptive Rechenstrecken →</b></button>
       <button className="trainer-card portfolio" onClick={() => startMode("calculation")}><span>∑</span><h2>Portfolio-Rechentrainer</h2><p>Aufgaben mit vollständigem Lösungsweg, Einheiten und unmittelbarer Fehlererkennung.</p><b>{quizQuestions.filter((item) => item.subject === "portfolio" && item.type === "calculation").length} Aufgaben →</b></button>
       <button className="trainer-card tax" onClick={() => startMode("tax-case")}><span>§</span><h2>Taxation-Falltrainer</h2><p>Steuerart, Steuersubjekt, Norm, Korrektur und Rechtsfolge systematisch prüfen.</p><b>{quizQuestions.filter((item) => item.subject === "tax" && ["legal-rule", "ordering", "calculation"].includes(item.type)).length} Fälle →</b></button>
       <button className="trainer-card formula" onClick={() => startMode("formula")}><span>ƒ</span><h2>Formeln & Normen</h2><p>Die passende Formel oder Vorschrift unter Zeitdruck erkennen und typische Verwechslungen vermeiden.</p><b>Schnelltraining →</b></button>
@@ -446,6 +458,38 @@ function SubjectTrainer({ setProgress }: { setProgress: React.Dispatch<React.Set
       {!checked && <label className="exam-confidence">Sicherheit<select value={confidence} onChange={(event) => setConfidence(event.target.value as Confidence)}><option value="low">niedrig</option><option value="medium">mittel</option><option value="high">hoch</option></select></label>}
       {checked && <div className={isCorrect(question, answer) ? "feedback correct-feedback" : "feedback wrong-feedback"}><h3>{isCorrect(question, answer) ? "Richtig." : "Fehler erkannt."}</h3><p>{question.explanation}</p>{question.solutionSteps && <ol>{question.solutionSteps.map((step) => <li key={step}>{step}</li>)}</ol>}<SourceBadge source={question.source} /></div>}
       <div className="question-actions">{checked ? <button className="primary-button" onClick={next}>Nächste Aufgabe →</button> : <button className="primary-button" disabled={answer === undefined} onClick={check}>Antwort prüfen</button>}</div>
+    </article>
+  </section>;
+}
+
+function CalculationLab({ task, position, total, confidence, setConfidence, onExit, onComplete }: {
+  task: LabTask; position: number; total: number; confidence: Confidence;
+  setConfidence: (value: Confidence) => void; onExit: () => void; onComplete: (errors: string[]) => void;
+}) {
+  const [stage, setStage] = useState<"formula" | "variables" | "prediction" | "steps" | "interpretation" | "result">("formula");
+  const [formula, setFormula] = useState<number>();
+  const [prediction, setPrediction] = useState<number>();
+  const [stepValues, setStepValues] = useState<string[]>(task.steps.map(() => ""));
+  const [interpretation, setInterpretation] = useState<number>();
+  const [checked, setChecked] = useState(false);
+  const [errors, setErrors] = useState<string[]>([]);
+  const [hint, setHint] = useState<number>();
+  const mark = (key: string, correct: boolean) => { if (!correct) setErrors((items) => items.includes(key) ? items : [...items, key]); setChecked(true); };
+  const advance = (next: typeof stage) => { setStage(next); setChecked(false); setHint(undefined); };
+  const stepCorrect = task.steps.map((item, index) => {
+    const value = Number(stepValues[index].replace(",", "."));
+    return Number.isFinite(value) && Math.abs(value-item.answer) <= (item.tolerance ?? Math.max(.02, Math.abs(item.answer)*.005));
+  });
+  return <section className="page lab-page">
+    <div className="trainer-head"><button className="text-button" onClick={onExit}>← Trainingsarten</button><span>Rechenstrecke {Math.min(position+1,total)} / {total}</span></div>
+    <div className="lab-progress">{["Formel","Variablen","Prognose","Rechnen","Deuten"].map((label,index)=><span key={label} className={index <= ["formula","variables","prediction","steps","interpretation","result"].indexOf(stage) ? "active" : ""}>{index+1}<small>{label}</small></span>)}</div>
+    <article className="question-card lab-card"><div className="lab-title"><span className="question-type">RECHENLABOR · {task.topic}</span><h1>{task.title}</h1><p>{task.prompt}</p></div>
+      {stage === "formula" && <><h2>1. Welches Modell brauchst du?</h2><p className="stage-intro">Wähle zuerst die passende Formel – noch ohne Zahlen einzusetzen.</p><div className="options formula-options">{task.formulaOptions.map((item,i)=><button key={item} disabled={checked} className={`${formula===i?"selected":""} ${checked&&i===0?"correct":""} ${checked&&formula===i&&i!==0?"incorrect":""}`} onClick={()=>setFormula(i)}><span>{String.fromCharCode(65+i)}</span>{item}</button>)}</div>{checked&&<div className={formula===0?"feedback correct-feedback":"feedback wrong-feedback"}><b>{formula===0?"Passende Formel erkannt.":"Diese Formel beantwortet eine andere Frage."}</b><p>{task.trap}</p></div>}<div className="question-actions">{checked?<button className="primary-button" onClick={()=>advance("variables")}>Werte zuordnen →</button>:<button className="primary-button" disabled={formula===undefined} onClick={()=>mark("formula",formula===0)}>Prüfen</button>}</div></>}
+      {stage === "variables" && <><h2>2. Angaben den Variablen zuordnen</h2><p className="stage-intro">Sprich jede Zeile innerlich aus. So wird aus Symbolen ein Rechenplan.</p><div className="variable-grid">{task.variables.map(item=><div key={item.symbol}><strong>{item.symbol}</strong><b>{item.value}</b><span>{item.meaning}</span></div>)}</div><div className="feedback neutral-feedback"><b>Einheiten-Check</b><p>Prozentwerte beim Rechnen konsistent als Prozent oder Dezimalzahl verwenden. Nicht innerhalb eines Rechenschritts mischen.</p></div><div className="question-actions"><button className="primary-button" onClick={()=>advance("prediction")}>Ergebnisrichtung vorhersagen →</button></div></>}
+      {stage === "prediction" && <><h2>3. Was erwartest du vor dem Rechnen?</h2><p className="stage-intro">Die Prognose ist dein Plausibilitätscheck gegen Taschenrechner- und Vorzeichenfehler.</p><div className="options">{task.predictionOptions.map((item,i)=><button key={item} disabled={checked} className={`${prediction===i?"selected":""} ${checked&&i===0?"correct":""} ${checked&&prediction===i&&i!==0?"incorrect":""}`} onClick={()=>setPrediction(i)}><span>{String.fromCharCode(65+i)}</span>{item}</button>)}</div>{checked&&<div className={prediction===0?"feedback correct-feedback":"feedback wrong-feedback"}><p>{task.prediction}</p></div>}<div className="question-actions">{checked?<button className="primary-button" onClick={()=>advance("steps")}>Jetzt rechnen →</button>:<button className="primary-button" disabled={prediction===undefined} onClick={()=>mark("prediction",prediction===0)}>Prognose prüfen</button>}</div></>}
+      {stage === "steps" && <><h2>4. Rechenweg in kontrollierten Schritten</h2><div className="formula-strip">{task.formula}</div><div className="step-inputs">{task.steps.map((item,i)=><label key={item.label} className={checked?(stepCorrect[i]?"step-right":"step-wrong"):""}><span><b>{i+1}. {item.label}</b>{hint===i&&<small>{item.hint}</small>}</span><span className="number-field"><input inputMode="decimal" value={stepValues[i]} disabled={checked} onChange={e=>setStepValues(values=>values.map((v,x)=>x===i?e.target.value:v))} placeholder="Dein Wert"/><i>{item.unit}</i></span>{!checked&&<button type="button" className="hint-button" onClick={()=>setHint(i)}>Hinweis</button>}{checked&&!stepCorrect[i]&&<em>Richtig: {String(item.answer).replace(".",",")} {item.unit}</em>}</label>)}</div>{checked&&<div className={stepCorrect.every(Boolean)?"feedback correct-feedback":"feedback wrong-feedback"}><b>{stepCorrect.every(Boolean)?"Rechenweg vollständig korrekt.":"Der genaue Fehlerpunkt ist markiert."}</b><p>{task.trap}</p></div>}<div className="question-actions">{checked?<button className="primary-button" onClick={()=>advance("interpretation")}>Ergebnis deuten →</button>:<button className="primary-button" disabled={stepValues.some(v=>!v.trim())} onClick={()=>mark("steps",stepCorrect.every(Boolean))}>Rechenweg prüfen</button>}</div></>}
+      {stage === "interpretation" && <><h2>5. Was bedeutet das Ergebnis?</h2><div className="options">{task.interpretationOptions.map((item,i)=><button key={item} disabled={checked} className={`${interpretation===i?"selected":""} ${checked&&i===0?"correct":""} ${checked&&interpretation===i&&i!==0?"incorrect":""}`} onClick={()=>setInterpretation(i)}><span>{String.fromCharCode(65+i)}</span>{item}</button>)}</div>{checked&&<div className={interpretation===0?"feedback correct-feedback":"feedback wrong-feedback"}><p>{task.interpretation}</p></div>}<div className="question-actions">{checked?<button className="primary-button" onClick={()=>advance("result")}>Auswertung →</button>:<button className="primary-button" disabled={interpretation===undefined} onClick={()=>mark("interpretation",interpretation===0)}>Interpretation prüfen</button>}</div></>}
+      {stage === "result" && <div className="lab-result"><span className={errors.length?"result-ring needs-work":"result-ring mastered"}>{5-errors.length}<small>/ 5</small></span><h2>{errors.length?"Rechenstrecke abgeschlossen – gezielte Wiederholung eingeplant.":"Rechenstrecke sicher beherrscht."}</h2><p>{errors.length?`Noch offen: ${errors.map(e=>({formula:"Formelwahl",prediction:"Plausibilität",steps:"Rechenweg",interpretation:"Deutung"}[e])).join(", ")}. Eine neue Zahlenvariante dieses Themas wird hinten angefügt.`:"Du hast Modellwahl, Plausibilität, Rechnung und Interpretation verbunden."}</p><label className="exam-confidence">Wie sicher fühltest du dich?<select value={confidence} onChange={e=>setConfidence(e.target.value as Confidence)}><option value="low">niedrig</option><option value="medium">mittel</option><option value="high">hoch</option></select></label><SourceBadge source={task.source}/><button className="primary-button" onClick={()=>onComplete(errors)}>Nächste Rechenstrecke →</button></div>}
     </article>
   </section>;
 }
