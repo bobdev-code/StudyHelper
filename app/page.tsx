@@ -21,6 +21,7 @@ import type {
   QuizQuestion,
   Subject,
 } from "@/lib/types";
+import { PortfolioAcademy } from "./portfolioAcademy";
 import { createLabTasks, labErrorByStage, type LabTask } from "@/lib/data/calculationLab";
 
 type View = "dashboard" | "plan" | "cards" | "quiz" | "trainer" | "errors" | "models" | "videos" | "exam";
@@ -176,7 +177,7 @@ export default function Home() {
         {view === "plan" && <DailyPlan progress={progress} navigate={navigate} />}
         {view === "cards" && <Cards progress={progress} setProgress={setProgress} />}
         {view === "quiz" && <Quiz setProgress={setProgress} />}
-        {view === "trainer" && <SubjectTrainer setProgress={setProgress} />}
+        {view === "trainer" && <SubjectTrainer progress={progress} setProgress={setProgress} />}
         {view === "errors" && <ErrorBook progress={progress} navigate={navigate} />}
         {view === "models" && <Models />}
         {view === "videos" && <Videos />}
@@ -404,9 +405,9 @@ function Quiz({ setProgress }: { setProgress: React.Dispatch<React.SetStateActio
   );
 }
 
-type TrainerMode = "calculation" | "tax-case" | "formula" | "lab";
+type TrainerMode = "calculation" | "tax-case" | "formula" | "lab" | "academy";
 
-function SubjectTrainer({ setProgress }: { setProgress: React.Dispatch<React.SetStateAction<AppProgress>> }) {
+function SubjectTrainer({ progress, setProgress }: { progress: AppProgress; setProgress: React.Dispatch<React.SetStateAction<AppProgress>> }) {
   const [mode, setMode] = useState<TrainerMode>();
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
   const [index, setIndex] = useState(0);
@@ -419,6 +420,7 @@ function SubjectTrainer({ setProgress }: { setProgress: React.Dispatch<React.Set
   const question = questions[index];
 
   const startMode = (next: TrainerMode) => {
+    if (next === "academy") { setMode(next); return; }
     if (next === "lab") { setMode(next); setLabTasks(createLabTasks()); setLabIndex(0); return; }
     const filtered = quizQuestions.filter((item) => next === "calculation"
       ? item.subject === "portfolio" && item.type === "calculation"
@@ -435,6 +437,8 @@ function SubjectTrainer({ setProgress }: { setProgress: React.Dispatch<React.Set
   };
   const next = () => { setIndex((value) => (value + 1) % Math.max(1, questions.length)); setAnswer(undefined); setChecked(false); setConfidence("medium"); started.current = Date.now(); };
 
+  if (mode === "academy") return <PortfolioAcademy progress={progress} setProgress={setProgress} onExit={() => setMode(undefined)} />;
+
   if (mode === "lab" && labTasks[labIndex]) return <CalculationLab task={labTasks[labIndex]} position={labIndex} total={labTasks.length} confidence={confidence} setConfidence={setConfidence} onExit={() => setMode(undefined)} onComplete={(errors) => {
     const task = labTasks[labIndex]; const correct = errors.length === 0;
     setProgress((current) => addAnswer(current, { id: uid("lab"), questionId: `lab-${task.id}-${Date.now()}`, subject: "portfolio", topic: task.topic, correct, durationMs: 0, confidence, errorType: correct ? undefined : labErrorByStage[errors[0]], answeredAt: new Date().toISOString() }));
@@ -444,6 +448,7 @@ function SubjectTrainer({ setProgress }: { setProgress: React.Dispatch<React.Set
 
   if (!mode || !question) return <section className="page"><PageHeading eyebrow="GEZIELTE PRÜFUNGSROUTINE" title="Fachtrainer" description="Vier fokussierte Trainingsarten: Rechenlabor, klassische Aufgaben, strukturierte Steuerfälle und schnelles Abrufen von Formeln beziehungsweise Normen." />
     <div className="trainer-grid">
+      <button className="trainer-card academy" onClick={() => startMode("academy")}><span>◆</span><h2>Portfolio-Klausurwerkstatt</h2><p>Alle 12 Ausbaustufen: unbekannte Aufgabenketten, Teilpunkte, freies Rechenblatt, Formelnetz, Simulator, Fehlerprofil und Mastery.</p><b>Neue Komplettstufe öffnen →</b></button>
       <button className="trainer-card lab" onClick={() => startMode("lab")}><span>⌬</span><h2>Portfolio-Rechenlabor</h2><p>Formel erkennen, Werte zuordnen, Ergebnis vorhersagen, jeden Schritt rechnen und ökonomisch erklären.</p><b>7 adaptive Rechenstrecken →</b></button>
       <button className="trainer-card portfolio" onClick={() => startMode("calculation")}><span>∑</span><h2>Portfolio-Rechentrainer</h2><p>Aufgaben mit vollständigem Lösungsweg, Einheiten und unmittelbarer Fehlererkennung.</p><b>{quizQuestions.filter((item) => item.subject === "portfolio" && item.type === "calculation").length} Aufgaben →</b></button>
       <button className="trainer-card tax" onClick={() => startMode("tax-case")}><span>§</span><h2>Taxation-Falltrainer</h2><p>Steuerart, Steuersubjekt, Norm, Korrektur und Rechtsfolge systematisch prüfen.</p><b>{quizQuestions.filter((item) => item.subject === "tax" && ["legal-rule", "ordering", "calculation"].includes(item.type)).length} Fälle →</b></button>

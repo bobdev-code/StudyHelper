@@ -29,3 +29,16 @@ test("ships the promised sourced learning-content minimum", async () => {
     assert.equal(portfolio.includes(blocked), false, `${blocked} must stay blocked`);
   }
 });
+
+test("ships the complete portfolio Klausurwerkstatt", async () => {
+  const [academy, data] = await Promise.all([
+    readFile(new URL("../app/portfolioAcademy.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/data/advancedPortfolio.ts", import.meta.url), "utf8"),
+  ]);
+  for (const feature of ["Gemischte Aufgabenketten", "Formel-Entscheidungsbaum", "Interaktives Formelnetz", "Diversifikations- & CAPM-Simulator", "Fehlerdetektiv", "Fehlerprofil & Mastery"]) {
+    assert.ok(academy.includes(feature), `missing academy feature: ${feature}`);
+  }
+  assert.ok(data.includes("totalPoints"));
+  assert.ok(data.includes("interpretationKeywords"));
+  assert.ok(data.includes("Gewichte nicht quadriert"));
+});

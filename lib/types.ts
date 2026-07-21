@@ -106,8 +106,20 @@ export type AppProgress = {
   cards: Record<string, CardProgress>;
   answers: AnswerRecord[];
   exams: ExamSession[];
+  portfolioAttempts?: PortfolioAttempt[];
   settings: {
     dailyMinutes: number;
     examDate: string;
   };
+};
+
+export type PortfolioAttempt = {
+  id: string;
+  taskId: string;
+  topic: string;
+  mode: "chain" | "challenge" | "detective" | "explanation";
+  score: number;
+  maxScore: number;
+  errorTypes: string[];
+  completedAt: string;
 };

@@ -14,6 +14,7 @@ export const defaultProgress: AppProgress = {
   cards: {},
   answers: [],
   exams: [],
+  portfolioAttempts: [],
   settings: { dailyMinutes: 45, examDate: "2026-08-04T09:00:00-03:00" },
 };
 
@@ -30,6 +31,7 @@ export function loadProgress(): AppProgress {
       cards: parsed.cards ?? {},
       answers: parsed.answers ?? [],
       exams: parsed.exams ?? [],
+      portfolioAttempts: parsed.portfolioAttempts ?? [],
       settings: { ...defaultProgress.settings, ...(parsed.settings ?? {}) },
     };
   } catch {
