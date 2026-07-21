@@ -22,7 +22,7 @@ import type {
   Subject,
 } from "@/lib/types";
 
-type View = "dashboard" | "cards" | "quiz" | "models" | "videos" | "exam";
+type View = "dashboard" | "plan" | "cards" | "quiz" | "trainer" | "errors" | "models" | "videos" | "exam";
 
 const subjectName: Record<Subject, string> = {
   portfolio: "Portfolio Management",
@@ -41,8 +41,11 @@ const errorTypes: ErrorType[] = [
 
 const navItems: { view: View; label: string; icon: string }[] = [
   { view: "dashboard", label: "Dashboard", icon: "▦" },
+  { view: "plan", label: "Tagesplan", icon: "✓" },
   { view: "cards", label: "Karteikarten", icon: "▱" },
-  { view: "quiz", label: "Quiz", icon: "?" },
+  { view: "quiz", label: "Diagnose & Quiz", icon: "?" },
+  { view: "trainer", label: "Fachtrainer", icon: "∑" },
+  { view: "errors", label: "Fehlerbuch", icon: "!" },
   { view: "models", label: "Modelle", icon: "⌁" },
   { view: "videos", label: "Video-Playlist", icon: "▶" },
   { view: "exam", label: "Prüfungsmodus", icon: "◇" },
@@ -169,8 +172,11 @@ export default function Home() {
           <span>{daysUntil(progress.settings.examDate)} T</span>
         </header>
         {view === "dashboard" && <Dashboard progress={progress} navigate={navigate} />}
+        {view === "plan" && <DailyPlan progress={progress} navigate={navigate} />}
         {view === "cards" && <Cards progress={progress} setProgress={setProgress} />}
         {view === "quiz" && <Quiz setProgress={setProgress} />}
+        {view === "trainer" && <SubjectTrainer setProgress={setProgress} />}
+        {view === "errors" && <ErrorBook progress={progress} navigate={navigate} />}
         {view === "models" && <Models />}
         {view === "videos" && <Videos />}
         {view === "exam" && <Exam progress={progress} setProgress={setProgress} />}
@@ -329,9 +335,11 @@ function Cards({ progress, setProgress }: { progress: AppProgress; setProgress: 
 }
 
 function Quiz({ setProgress }: { setProgress: React.Dispatch<React.SetStateAction<AppProgress>> }) {
-  const [subject, setSubject] = useState<Subject>("portfolio");
+  const [subject, setSubject] = useState<Subject | "all">("portfolio");
   const [diagnostic, setDiagnostic] = useState(false);
   const [session, setSession] = useState<QuizQuestion[]>([]);
+  const [sessionResults, setSessionResults] = useState<AnswerRecord[]>([]);
+  const [showResult, setShowResult] = useState(false);
   const [index, setIndex] = useState(0);
   const [answer, setAnswer] = useState<number | number[]>();
   const [checked, setChecked] = useState(false);
@@ -341,8 +349,11 @@ function Quiz({ setProgress }: { setProgress: React.Dispatch<React.SetStateActio
   const question = session[index];
 
   const start = () => {
-    const pool = quizQuestions.filter((item) => item.subject === subject && (!diagnostic || item.diagnostic));
-    setSession(shuffle(pool).slice(0, diagnostic ? 10 : 12));
+    const pool = quizQuestions.filter((item) => (subject === "all" || item.subject === subject) && (!diagnostic || item.diagnostic));
+    const broad = [...new Map(shuffle(pool).map((item) => [`${item.subject}-${item.topic}`, item])).values()];
+    const target = diagnostic ? (subject === "all" ? 18 : 12) : 12;
+    setSession([...broad, ...shuffle(pool.filter((item) => !broad.includes(item)))].slice(0, target));
+    setSessionResults([]); setShowResult(false);
     setIndex(0); setAnswer(undefined); setChecked(false); started.current = Date.now();
   };
   const check = () => {
@@ -350,17 +361,31 @@ function Quiz({ setProgress }: { setProgress: React.Dispatch<React.SetStateActio
     const correct = isCorrect(question, answer);
     const record: AnswerRecord = { id: uid("answer"), questionId: question.id, subject: question.subject, topic: question.topic, correct, durationMs: Date.now() - started.current, confidence, errorType: correct ? undefined : errorType, answeredAt: new Date().toISOString() };
     setProgress((current) => addAnswer(current, record));
+    setSessionResults((current) => [...current, record]);
     setChecked(true);
   };
   const next = () => {
-    if (index >= session.length - 1) { setSession([]); return; }
+    if (index >= session.length - 1) { setSession([]); setShowResult(true); return; }
     setIndex((value) => value + 1); setAnswer(undefined); setChecked(false); setConfidence("medium"); started.current = Date.now();
   };
 
+  if (!question && showResult) {
+    const grouped = [...new Map(sessionResults.map((item) => [`${item.subject}-${item.topic}`, { subject: item.subject, topic: item.topic }])).values()].map((group) => {
+      const answers = sessionResults.filter((item) => item.subject === group.subject && item.topic === group.topic);
+      const correct = answers.filter((item) => item.correct).length;
+      const falseHigh = answers.filter((item) => !item.correct && item.confidence === "high").length;
+      return { ...group, correct, total: answers.length, accuracy: pct(correct, answers.length), falseHigh };
+    }).sort((a, b) => a.accuracy - b.accuracy);
+    return <section className="page"><PageHeading eyebrow="DIAGNOSE ABGESCHLOSSEN" title={`${pct(sessionResults.filter((item) => item.correct).length, sessionResults.length)}% richtig`} description="Das Kompetenzprofil trennt Trefferquote und Scheinsicherheit. Themen mit sicher falschen Antworten erhalten höchste Priorität." />
+      <div className="competence-grid">{grouped.map((item) => <article className="competence-card" key={`${item.subject}-${item.topic}`}><div><span>{subjectName[item.subject]}</span><b className={item.accuracy >= 75 ? "safe" : item.accuracy >= 50 ? "unsure" : "weak"}>{item.accuracy >= 75 ? "stabil" : item.falseHigh ? "Scheinsicherheit" : item.accuracy >= 50 ? "unsicher" : "Lücke"}</b></div><h3>{item.topic}</h3><div className="progress-track"><span style={{ width: `${item.accuracy}%` }} /></div><p>{item.correct}/{item.total} richtig{item.falseHigh ? ` · ${item.falseHigh}× sicher falsch` : ""}</p></article>)}</div>
+      <button className="primary-button result-restart" onClick={() => { setShowResult(false); setSubject("all"); setDiagnostic(true); }}>Neue Gesamtdiagnose vorbereiten →</button>
+    </section>;
+  }
+
   if (!question) return (
     <section className="page"><PageHeading eyebrow="AKTIVES ABRUFEN" title="Quiz" description="Englische Prüfungsfragen, sofortiges Feedback und persönliches Fehlerprotokoll." />
-      <div className="setup-grid"><article className={`setup-card ${subject === "portfolio" ? "selected" : ""}`} onClick={() => setSubject("portfolio")}><span>◎</span><h2>Portfolio Management</h2><p>{quizQuestions.filter((item) => item.subject === "portfolio").length} geprüfte Fragen</p></article><article className={`setup-card ${subject === "tax" ? "selected tax" : ""}`} onClick={() => setSubject("tax")}><span>§</span><h2>Taxation</h2><p>{quizQuestions.filter((item) => item.subject === "tax").length} geprüfte Fragen</p></article></div>
-      <div className="quiz-start panel"><label className="switch-row"><input type="checkbox" checked={diagnostic} onChange={(event) => setDiagnostic(event.target.checked)} /><span><strong>Kurzer Diagnosetest</strong><small>10 breit gestreute Fragen zur Standortbestimmung</small></span></label><button className="primary-button" onClick={start}>{diagnostic ? "Diagnosetest starten" : "12 Fragen starten"} →</button></div>
+      <div className="setup-grid three"><article className={`setup-card ${subject === "portfolio" ? "selected" : ""}`} onClick={() => setSubject("portfolio")}><span>◎</span><h2>Portfolio Management</h2><p>{quizQuestions.filter((item) => item.subject === "portfolio").length} geprüfte Fragen</p></article><article className={`setup-card ${subject === "tax" ? "selected tax" : ""}`} onClick={() => setSubject("tax")}><span>§</span><h2>Taxation</h2><p>{quizQuestions.filter((item) => item.subject === "tax").length} geprüfte Fragen</p></article><article className={`setup-card ${subject === "all" ? "selected combined" : ""}`} onClick={() => { setSubject("all"); setDiagnostic(true); }}><span>◫</span><h2>Gesamtdiagnose</h2><p>18 Fragen aus beiden Fächern</p></article></div>
+      <div className="quiz-start panel"><label className="switch-row"><input type="checkbox" checked={diagnostic} onChange={(event) => setDiagnostic(event.target.checked)} /><span><strong>Adaptiver Diagnosetest</strong><small>{subject === "all" ? "18" : "12"} breit gestreute Fragen mit Sicherheitsabgleich</small></span></label><button className="primary-button" onClick={start}>{diagnostic ? "Diagnosetest starten" : "12 Fragen starten"} →</button></div>
     </section>
   );
 
@@ -376,6 +401,83 @@ function Quiz({ setProgress }: { setProgress: React.Dispatch<React.SetStateActio
       </article>
     </section>
   );
+}
+
+type TrainerMode = "calculation" | "tax-case" | "formula";
+
+function SubjectTrainer({ setProgress }: { setProgress: React.Dispatch<React.SetStateAction<AppProgress>> }) {
+  const [mode, setMode] = useState<TrainerMode>();
+  const [questions, setQuestions] = useState<QuizQuestion[]>([]);
+  const [index, setIndex] = useState(0);
+  const [answer, setAnswer] = useState<number>();
+  const [checked, setChecked] = useState(false);
+  const [confidence, setConfidence] = useState<Confidence>("medium");
+  const started = useRef(0);
+  const question = questions[index];
+
+  const startMode = (next: TrainerMode) => {
+    const filtered = quizQuestions.filter((item) => next === "calculation"
+      ? item.subject === "portfolio" && item.type === "calculation"
+      : next === "tax-case"
+        ? item.subject === "tax" && ["legal-rule", "ordering", "calculation"].includes(item.type)
+        : (item.subject === "portfolio" && item.type === "formula") || (item.subject === "tax" && item.type === "legal-rule"));
+    setMode(next); setQuestions(shuffle(filtered)); setIndex(0); setAnswer(undefined); setChecked(false); started.current = Date.now();
+  };
+  const check = () => {
+    if (!question || answer === undefined) return;
+    const correct = isCorrect(question, answer);
+    setProgress((current) => addAnswer(current, { id: uid("trainer"), questionId: question.id, subject: question.subject, topic: question.topic, correct, durationMs: Date.now() - started.current, confidence, errorType: correct ? undefined : mode === "calculation" ? "Rechenfehler" : mode === "tax-case" ? "Rechtsfolge falsch" : question.subject === "tax" ? "Norm nicht gefunden" : "falsche Formel", answeredAt: new Date().toISOString() }));
+    setChecked(true);
+  };
+  const next = () => { setIndex((value) => (value + 1) % Math.max(1, questions.length)); setAnswer(undefined); setChecked(false); setConfidence("medium"); started.current = Date.now(); };
+
+  if (!mode || !question) return <section className="page"><PageHeading eyebrow="GEZIELTE PRÜFUNGSROUTINE" title="Fachtrainer" description="Drei fokussierte Trainingsarten: Rechenwege für Portfolio, strukturierte Steuerfälle und schnelles Abrufen von Formeln beziehungsweise Normen." />
+    <div className="trainer-grid">
+      <button className="trainer-card portfolio" onClick={() => startMode("calculation")}><span>∑</span><h2>Portfolio-Rechentrainer</h2><p>Aufgaben mit vollständigem Lösungsweg, Einheiten und unmittelbarer Fehlererkennung.</p><b>{quizQuestions.filter((item) => item.subject === "portfolio" && item.type === "calculation").length} Aufgaben →</b></button>
+      <button className="trainer-card tax" onClick={() => startMode("tax-case")}><span>§</span><h2>Taxation-Falltrainer</h2><p>Steuerart, Steuersubjekt, Norm, Korrektur und Rechtsfolge systematisch prüfen.</p><b>{quizQuestions.filter((item) => item.subject === "tax" && ["legal-rule", "ordering", "calculation"].includes(item.type)).length} Fälle →</b></button>
+      <button className="trainer-card formula" onClick={() => startMode("formula")}><span>ƒ</span><h2>Formeln & Normen</h2><p>Die passende Formel oder Vorschrift unter Zeitdruck erkennen und typische Verwechslungen vermeiden.</p><b>Schnelltraining →</b></button>
+    </div>
+  </section>;
+
+  return <section className="page"><div className="trainer-head"><button className="text-button" onClick={() => setMode(undefined)}>← Trainingsarten</button><span>{index + 1} / {questions.length}</span></div>
+    <article className="question-card"><span className="question-type">{mode === "calculation" ? "RECHENTRAINER" : mode === "tax-case" ? "FALLTRAINER" : "FORMEL / NORM"}</span><h1>{question.prompt}</h1>
+      {mode === "tax-case" && <div className="case-schema"><span>1 Steuerart</span><span>2 Subjekt</span><span>3 Ausgangsbetrag</span><span>4 Norm</span><span>5 Korrektur</span><span>6 Ergebnis</span></div>}
+      <div className="options">{question.options.map((option, optionIndex) => <button key={option} disabled={checked} className={`${answer === optionIndex ? "selected" : ""} ${checked && !Array.isArray(question.correct) && question.correct === optionIndex ? "correct" : ""} ${checked && answer === optionIndex && !isCorrect(question, answer) ? "incorrect" : ""}`} onClick={() => setAnswer(optionIndex)}><span>{String.fromCharCode(65 + optionIndex)}</span>{option}</button>)}</div>
+      {!checked && <label className="exam-confidence">Sicherheit<select value={confidence} onChange={(event) => setConfidence(event.target.value as Confidence)}><option value="low">niedrig</option><option value="medium">mittel</option><option value="high">hoch</option></select></label>}
+      {checked && <div className={isCorrect(question, answer) ? "feedback correct-feedback" : "feedback wrong-feedback"}><h3>{isCorrect(question, answer) ? "Richtig." : "Fehler erkannt."}</h3><p>{question.explanation}</p>{question.solutionSteps && <ol>{question.solutionSteps.map((step) => <li key={step}>{step}</li>)}</ol>}<SourceBadge source={question.source} /></div>}
+      <div className="question-actions">{checked ? <button className="primary-button" onClick={next}>Nächste Aufgabe →</button> : <button className="primary-button" disabled={answer === undefined} onClick={check}>Antwort prüfen</button>}</div>
+    </article>
+  </section>;
+}
+
+function ErrorBook({ progress, navigate }: { progress: AppProgress; navigate: (view: View) => void }) {
+  const latestByQuestion = new Map<string, AnswerRecord>();
+  [...progress.answers].reverse().forEach((item) => { if (!latestByQuestion.has(item.questionId)) latestByQuestion.set(item.questionId, item); });
+  const errors = [...latestByQuestion.values()].filter((item) => !item.correct).map((answer) => ({ answer, question: quizQuestions.find((item) => item.id === answer.questionId) })).filter((item) => item.question) as { answer: AnswerRecord; question: QuizQuestion }[];
+  const errorCounts = errorTypes.map((type) => ({ type, count: errors.filter((item) => item.answer.errorType === type).length })).filter((item) => item.count);
+  return <section className="page"><PageHeading eyebrow="AUTOMATISCHE WIEDERVORLAGE" title="Dein Fehlerbuch" description="Hier landen die aktuell noch offenen Fehler. Sobald du dieselbe Aufgabe später richtig löst, verschwindet sie automatisch aus dieser Liste." />
+    <div className="error-summary"><article className="panel"><strong>{errors.length}</strong><span>offene Fehler</span></article><article className="panel"><strong>{errors.filter((item) => item.answer.confidence === "high").length}</strong><span>Scheinsicherheiten</span></article><article className="panel"><strong>{errors.length}</strong><span>zur Wiedervorlage</span></article></div>
+    {errorCounts.length > 0 && <div className="error-chips">{errorCounts.map((item) => <span key={item.type}>{item.type} <b>{item.count}</b></span>)}</div>}
+    {errors.length ? <div className="review-list">{errors.map(({ answer, question }) => <article className="review-item wrong" key={question.id}><div><span>{answer.confidence === "high" ? "Scheinsicherheit" : "Wiederholen"}</span><strong>{subjectName[answer.subject]} · {answer.topic}</strong><b>{answer.errorType ?? "Wissenslücke"}</b></div><h3>{question.prompt}</h3><p>{question.explanation}</p><small>Fehler vom {new Date(answer.answeredAt).toLocaleDateString("de-DE")}</small><SourceBadge source={question.source} /></article>)}</div> : <EmptyState>Noch keine offenen Fehler. Löse einen Diagnosetest oder eine Prüfung, damit das Fehlerbuch gezielt arbeiten kann.</EmptyState>}
+    <button className="primary-button error-cta" onClick={() => navigate("quiz")}>{errors.length ? "Offene Themen im Quiz trainieren" : "Diagnosetest starten"} →</button>
+  </section>;
+}
+
+function DailyPlan({ progress, navigate }: { progress: AppProgress; navigate: (view: View) => void }) {
+  const weak = getTopicStats(progress);
+  const due = Object.values(progress.cards).filter((item) => new Date(item.dueAt) <= new Date()).length;
+  const first = weak[0]; const second = weak[1];
+  const tasks: { minutes: number; title: string; detail: string; view: View }[] = [
+    { minutes: 10, title: "Fällige Fehler & Karten", detail: due ? `${due} Karte${due === 1 ? "" : "n"} sind heute fällig` : "Kurze Aktivierung aus dem Fehlerbuch", view: due ? "cards" : "errors" },
+    { minutes: 15, title: first?.topic ?? "Portfolio-Rechenroutine", detail: first ? `${subjectName[first.subject]} · aktuell ${first.accuracy}%` : "CAPM, Beta und Portfoliovarianz", view: first?.subject === "tax" ? "quiz" : "trainer" },
+    { minutes: 15, title: second?.topic ?? "Taxation-Fallroutine", detail: second ? `${subjectName[second.subject]} · aktuell ${second.accuracy}%` : "Norm, Tatbestand und Rechtsfolge", view: second?.subject === "portfolio" ? "trainer" : "quiz" },
+    { minutes: 10, title: "Gemischter Abruf", detail: "Unsicherheiten mit Sicherheitsangabe prüfen", view: "quiz" },
+    { minutes: 5, title: "Formeln & Normen", detail: "Schneller Abschluss ohne Unterlagen", view: "trainer" },
+  ];
+  return <section className="page"><PageHeading eyebrow={`${daysUntil(progress.settings.examDate)} TAGE BIS ZUR PRÜFUNG`} title={`Deine ${progress.settings.dailyMinutes + 10}-Minuten-Session`} description="Der Plan wird aus fälligen Wiederholungen und deinen schwächsten Themen berechnet. Neue Ergebnisse verändern automatisch die nächste Session." />
+    <div className="plan-layout"><div className="plan-list">{tasks.map((task, index) => <button key={`${task.title}-${index}`} onClick={() => navigate(task.view)}><span>{String(index + 1).padStart(2, "0")}</span><div><h3>{task.title}</h3><p>{task.detail}</p></div><b>{task.minutes} Min →</b></button>)}</div>
+      <aside className="panel plan-aside"><h2>Heutiger Fokus</h2><div className="plan-ring"><strong>{tasks.reduce((sum, item) => sum + item.minutes, 0)}</strong><span>Minuten</span></div><p>{first ? `Größter Hebel: ${first.topic}.` : "Starte mit der Gesamtdiagnose, damit der Plan persönlich wird."}</p><button className="primary-button" onClick={() => navigate(first ? tasks[0].view : "quiz")}>Session starten →</button></aside></div>
+  </section>;
 }
 
 function Models() {
@@ -463,6 +565,7 @@ function Exam({ progress, setProgress }: { progress: AppProgress; setProgress: R
   const [finished, setFinished] = useState(false);
   const [wrongFilter, setWrongFilter] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const incomplete = [...progress.exams].reverse().find((item) => !item.completedAt);
 
   const examQuestions = useMemo(() => exam ? exam.questionIds.map((id) => quizQuestions.find((item) => item.id === id)).filter(Boolean) as QuizQuestion[] : [], [exam]);
   const current = examQuestions[index];
@@ -497,14 +600,16 @@ function Exam({ progress, setProgress }: { progress: AppProgress; setProgress: R
   const startExam = () => {
     const pool = quizQuestions.filter((item) => item.subject === subject);
     const selected = pickQuestionsForPoints(pool, 90);
-    setExam({ id: uid("exam"), subject, startedAt: new Date().toISOString(), questionIds: selected.map((item) => item.id), answers: {}, confidences: {} });
+    const created: ExamSession = { id: uid("exam"), subject, startedAt: new Date().toISOString(), questionIds: selected.map((item) => item.id), answers: {}, confidences: {} };
+    setExam(created); setProgress((current) => upsertExam(current, created));
     setIndex(0); setSeconds(90 * 60); setFinished(false); setWrongFilter(false);
   };
-  const answer = (value: number) => { if (!exam || !current) return; setExam({ ...exam, answers: { ...exam.answers, [current.id]: value } }); };
-  const setExamConfidence = (value: Confidence) => { if (!exam || !current) return; setExam({ ...exam, confidences: { ...exam.confidences, [current.id]: value } }); };
+  const resumeExam = () => { if (!incomplete) return; setSubject(incomplete.subject); setExam(incomplete); setIndex(Math.max(0, incomplete.questionIds.findIndex((id) => incomplete.answers[id] === undefined))); setFinished(false); };
+  const answer = (value: number) => { if (!exam || !current) return; const changed = { ...exam, answers: { ...exam.answers, [current.id]: value } }; setExam(changed); setProgress((progressNow) => upsertExam(progressNow, changed)); };
+  const setExamConfidence = (value: Confidence) => { if (!exam || !current) return; const changed = { ...exam, confidences: { ...exam.confidences, [current.id]: value } }; setExam(changed); setProgress((progressNow) => upsertExam(progressNow, changed)); };
 
   if (!exam) return <section className="page"><PageHeading eyebrow="90 MINUTEN · OHNE SOFORTLÖSUNG" title="Prüfungsmodus" description="Gemischte Aufgaben, Punkteverteilung und Auswertung erst nach Abgabe." />
-    <div className="exam-setup"><div className="exam-clock">90:00<small>Minuten</small></div><div><h2>Prüfung wählen</h2><div className="subject-tabs"><button className={subject === "portfolio" ? "active" : ""} onClick={() => setSubject("portfolio")}>Portfolio Management</button><button className={subject === "tax" ? "active" : ""} onClick={() => setSubject("tax")}>Taxation</button></div><ul><li>Fragen zufällig gemischt</li><li>Keine Lösung während der Bearbeitung</li><li>Falsche Fragen anschließend wiederholen</li></ul><button className="primary-button" onClick={startExam}>90-Minuten-Prüfung starten →</button></div></div>
+    <div className="exam-setup"><div className="exam-clock">90:00<small>Minuten</small></div><div><h2>Prüfung wählen</h2><div className="subject-tabs"><button className={subject === "portfolio" ? "active" : ""} onClick={() => setSubject("portfolio")}>Portfolio Management</button><button className={subject === "tax" ? "active" : ""} onClick={() => setSubject("tax")}>Taxation</button></div><ul><li>Fragen zufällig gemischt</li><li>Automatische Zwischenspeicherung</li><li>Keine Lösung während der Bearbeitung</li><li>Falsche Fragen anschließend wiederholen</li></ul>{incomplete && <button className="resume-button" onClick={resumeExam}>Offene {subjectName[incomplete.subject]}-Prüfung fortsetzen →</button>}<button className="primary-button" onClick={startExam}>Neue 90-Minuten-Prüfung starten →</button></div></div>
   </section>;
 
   if (finished) {
