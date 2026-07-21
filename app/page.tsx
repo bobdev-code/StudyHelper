@@ -23,6 +23,7 @@ import type {
 } from "@/lib/types";
 import { PortfolioAcademy } from "./portfolioAcademy";
 import { createLabTasks, labErrorByStage, type LabTask } from "@/lib/data/calculationLab";
+import { taxCases, taxCaseErrorByStep, type TaxCase } from "@/lib/data/taxCaseLab";
 
 type View = "dashboard" | "plan" | "cards" | "quiz" | "trainer" | "errors" | "models" | "videos" | "exam";
 
@@ -405,7 +406,7 @@ function Quiz({ setProgress }: { setProgress: React.Dispatch<React.SetStateActio
   );
 }
 
-type TrainerMode = "calculation" | "tax-case" | "formula" | "lab" | "academy";
+type TrainerMode = "calculation" | "tax-case" | "formula" | "lab" | "academy" | "tax-lab";
 
 function SubjectTrainer({ progress, setProgress }: { progress: AppProgress; setProgress: React.Dispatch<React.SetStateAction<AppProgress>> }) {
   const [mode, setMode] = useState<TrainerMode>();
@@ -416,12 +417,15 @@ function SubjectTrainer({ progress, setProgress }: { progress: AppProgress; setP
   const [confidence, setConfidence] = useState<Confidence>("medium");
   const [labTasks, setLabTasks] = useState<LabTask[]>([]);
   const [labIndex, setLabIndex] = useState(0);
+  const [taxLabCases, setTaxLabCases] = useState<TaxCase[]>([]);
+  const [taxLabIndex, setTaxLabIndex] = useState(0);
   const started = useRef(0);
   const question = questions[index];
 
   const startMode = (next: TrainerMode) => {
     if (next === "academy") { setMode(next); return; }
     if (next === "lab") { setMode(next); setLabTasks(createLabTasks()); setLabIndex(0); return; }
+    if (next === "tax-lab") { setMode(next); setTaxLabCases(shuffle(taxCases)); setTaxLabIndex(0); return; }
     const filtered = quizQuestions.filter((item) => next === "calculation"
       ? item.subject === "portfolio" && item.type === "calculation"
       : next === "tax-case"
@@ -446,12 +450,20 @@ function SubjectTrainer({ progress, setProgress }: { progress: AppProgress; setP
     setLabIndex((value) => value + 1); setConfidence("medium");
   }} />;
 
-  if (!mode || !question) return <section className="page"><PageHeading eyebrow="GEZIELTE PRÜFUNGSROUTINE" title="Fachtrainer" description="Vier fokussierte Trainingsarten: Rechenlabor, klassische Aufgaben, strukturierte Steuerfälle und schnelles Abrufen von Formeln beziehungsweise Normen." />
+  if (mode === "tax-lab" && taxLabCases[taxLabIndex]) return <TaxCaseLab taxCase={taxLabCases[taxLabIndex]} position={taxLabIndex} total={taxLabCases.length} confidence={confidence} setConfidence={setConfidence} onExit={() => setMode(undefined)} onComplete={(score, firstError) => {
+    const item = taxLabCases[taxLabIndex]; const correct = score === item.steps.reduce((sum, step) => sum + step.points, 0);
+    setProgress((current) => addAnswer(current, { id: uid("tax-lab"), questionId: `tax-lab-${item.id}-${Date.now()}`, subject: "tax", topic: item.topic, correct, durationMs: 0, confidence, errorType: firstError ? taxCaseErrorByStep[firstError] : undefined, answeredAt: new Date().toISOString() }));
+    setTaxLabCases((current) => correct ? current : [...current, item]);
+    setTaxLabIndex((value) => value + 1); setConfidence("medium");
+  }} />;
+
+  if (!mode || !question) return <section className="page"><PageHeading eyebrow="GEZIELTE PRÜFUNGSROUTINE" title="Fachtrainer" description="Geführte Fachlabore, Klausurwerkstatt, klassische Aufgaben und schneller Abruf verbinden Wissen mit einem vollständigen prüfungsreifen Lösungsweg." />
     <div className="trainer-grid">
       <button className="trainer-card academy" onClick={() => startMode("academy")}><span>◆</span><h2>Portfolio-Klausurwerkstatt</h2><p>Alle 12 Ausbaustufen: unbekannte Aufgabenketten, Teilpunkte, freies Rechenblatt, Formelnetz, Simulator, Fehlerprofil und Mastery.</p><b>Neue Komplettstufe öffnen →</b></button>
       <button className="trainer-card lab" onClick={() => startMode("lab")}><span>⌬</span><h2>Portfolio-Rechenlabor</h2><p>Formel erkennen, Werte zuordnen, Ergebnis vorhersagen, jeden Schritt rechnen und ökonomisch erklären.</p><b>7 adaptive Rechenstrecken →</b></button>
+      <button className="trainer-card tax tax-lab-card" onClick={() => startMode("tax-lab")}><span>§</span><h2>Taxation-Falllabor</h2><p>Unbekannten Sachverhalt prüfen: Steuerart, Steuersubjekt, Norm, Berechnung und gutachterliches Ergebnis.</p><b>{taxCases.length} vollständige Fallketten · Teilpunkte →</b></button>
       <button className="trainer-card portfolio" onClick={() => startMode("calculation")}><span>∑</span><h2>Portfolio-Rechentrainer</h2><p>Aufgaben mit vollständigem Lösungsweg, Einheiten und unmittelbarer Fehlererkennung.</p><b>{quizQuestions.filter((item) => item.subject === "portfolio" && item.type === "calculation").length} Aufgaben →</b></button>
-      <button className="trainer-card tax" onClick={() => startMode("tax-case")}><span>§</span><h2>Taxation-Falltrainer</h2><p>Steuerart, Steuersubjekt, Norm, Korrektur und Rechtsfolge systematisch prüfen.</p><b>{quizQuestions.filter((item) => item.subject === "tax" && ["legal-rule", "ordering", "calculation"].includes(item.type)).length} Fälle →</b></button>
+      <button className="trainer-card tax" onClick={() => startMode("tax-case")}><span>¶</span><h2>Taxation-Schnellfälle</h2><p>Einzelne Normen, Rechtsfolgen und Berechnungen unter Zeitdruck abrufen.</p><b>{quizQuestions.filter((item) => item.subject === "tax" && ["legal-rule", "ordering", "calculation"].includes(item.type)).length} Kurzfälle →</b></button>
       <button className="trainer-card formula" onClick={() => startMode("formula")}><span>ƒ</span><h2>Formeln & Normen</h2><p>Die passende Formel oder Vorschrift unter Zeitdruck erkennen und typische Verwechslungen vermeiden.</p><b>Schnelltraining →</b></button>
     </div>
   </section>;
@@ -466,6 +478,56 @@ function SubjectTrainer({ progress, setProgress }: { progress: AppProgress; setP
     </article>
   </section>;
 }
+
+function TaxCaseLab({ taxCase, position, total, confidence, setConfidence, onExit, onComplete }: {
+  taxCase: TaxCase; position: number; total: number; confidence: Confidence;
+  setConfidence: (value: Confidence) => void; onExit: () => void;
+  onComplete: (score: number, firstError?: TaxCase["steps"][number]["id"]) => void;
+}) {
+  const [stepIndex, setStepIndex] = useState(0);
+  const [answer, setAnswer] = useState<number>();
+  const [numberAnswer, setNumberAnswer] = useState("");
+  const [checked, setChecked] = useState(false);
+  const [results, setResults] = useState<{ id: TaxCase["steps"][number]["id"]; correct: boolean; points: number }[]>([]);
+  const [memo, setMemo] = useState("");
+  const done = stepIndex >= taxCase.steps.length;
+  const step = taxCase.steps[Math.min(stepIndex, taxCase.steps.length - 1)];
+  const maxScore = taxCase.steps.reduce((sum, item) => sum + item.points, 0);
+  const score = results.reduce((sum, item) => sum + item.points, 0);
+  const isNumberCorrect = step.input ? Math.abs(Number(numberAnswer.replace(/\s/g, "").replace(",", ".")) - step.input.answer) <= (step.input.tolerance ?? 0.01) : false;
+  const correct = step.input ? isNumberCorrect : answer === step.correct;
+  const checkStep = () => {
+    setResults((current) => [...current, { id: step.id, correct, points: correct ? step.points : 0 }]);
+    setChecked(true);
+  };
+  const nextStep = () => { setStepIndex((value) => value + 1); setAnswer(undefined); setNumberAnswer(""); setChecked(false); };
+  const firstError = results.find((item) => !item.correct)?.id;
+
+  return <section className="page lab-page tax-case-page">
+    <div className="trainer-head"><button className="text-button" onClick={onExit}>← Trainingsarten</button><span>Steuerfall {Math.min(position + 1, total)} / {total}</span></div>
+    <div className="tax-case-progress">{taxCase.steps.map((item, index) => <span key={item.id} className={`${index < stepIndex ? (results[index]?.correct ? "passed" : "missed") : ""} ${index === stepIndex && !done ? "active" : ""}`}><b>{index + 1}</b><small>{["Steuerart","Subjekt","Norm","Rechnung","Ergebnis"][index]}</small></span>)}</div>
+    <article className="question-card lab-card tax-case-card">
+      <div className="lab-title"><span className="question-type">TAXATION FALLLABOR · {taxCase.topic}</span><h1>{taxCase.title}</h1><div className="case-facts"><b>Facts</b><p>{taxCase.facts}</p></div></div>
+      {!done && <>
+        <div className="case-score"><span>Schritt {stepIndex + 1} von {taxCase.steps.length}</span><b>{score} / {maxScore} Punkte bisher</b></div>
+        <h2>{step.title}</h2><p className="stage-intro">{step.prompt}</p>
+        {step.options && <div className="options">{step.options.map((option, index) => <button key={option} disabled={checked} className={`${answer === index ? "selected" : ""} ${checked && index === step.correct ? "correct" : ""} ${checked && answer === index && answer !== step.correct ? "incorrect" : ""}`} onClick={() => setAnswer(index)}><span>{String.fromCharCode(65 + index)}</span>{option}</button>)}</div>}
+        {step.input && <label className={`tax-number-answer ${checked ? (correct ? "step-right" : "step-wrong") : ""}`}><span><b>Your calculation</b><small>Negative amounts can be entered with a minus sign. Decimal comma and decimal point are accepted.</small></span><span className="number-field"><input inputMode="decimal" disabled={checked} value={numberAnswer} onChange={(event) => setNumberAnswer(event.target.value)} placeholder="Enter result"/><i>{step.input.unit}</i></span>{checked && !correct && <em>Correct result: {step.input.answer.toLocaleString("de-DE")} {step.input.unit}</em>}</label>}
+        {checked && <div className={correct ? "feedback correct-feedback" : "feedback wrong-feedback"}><h3>{correct ? `+${step.points} Punkte` : "0 Punkte – Fehlerstelle erkannt"}</h3><p>{step.explanation}</p></div>}
+        <div className="question-actions">{checked ? <button className="primary-button" onClick={nextStep}>{stepIndex === taxCase.steps.length - 1 ? "Fall auswerten" : "Nächster Prüfungsschritt"} →</button> : <button className="primary-button" disabled={step.input ? !numberAnswer.trim() : answer === undefined} onClick={checkStep}>Schritt prüfen</button>}</div>
+      </>}
+      {done && <div className="tax-case-result">
+        <div className="case-result-top"><span className={`result-ring ${score < maxScore * .7 ? "needs-work" : "mastered"}`}>{score}<small>/ {maxScore}</small></span><div><span className="question-type">TEILPUNKTE-AUSWERTUNG</span><h2>{score === maxScore ? "Fall vollständig beherrscht." : score >= maxScore * .7 ? "Solider Lösungsweg – einzelne Punkte nachschärfen." : "Dieser Fall wird adaptiv wiederholt."}</h2><p>{taxCase.trap}</p></div></div>
+        <div className="rubric-grid">{taxCase.steps.map((item, index) => <div key={item.id} className={results[index]?.correct ? "rubric-right" : "rubric-wrong"}><span>{results[index]?.correct ? "✓" : "×"}</span><b>{["Steuerart","Steuersubjekt","Norm","Berechnung","Rechtsfolge"][index]}</b><strong>{results[index]?.points ?? 0}/{item.points}</strong></div>)}</div>
+        <label className="memo-field"><b>Write your own short exam answer</b><small>Use: issue → rule → application/calculation → conclusion. This field is deliberately not auto-corrected.</small><textarea value={memo} onChange={(event) => setMemo(event.target.value)} placeholder="In the present case ..." rows={5}/></label>
+        <details className="model-answer"><summary>Compare with model answer</summary><p>{taxCase.modelAnswer}</p></details>
+        <label className="exam-confidence">Wie sicher fühltest du dich?<select value={confidence} onChange={(event) => setConfidence(event.target.value as Confidence)}><option value="low">niedrig</option><option value="medium">mittel</option><option value="high">hoch</option></select></label>
+        <SourceBadge source={taxCase.source}/><button className="primary-button" onClick={() => onComplete(score, firstError)}>Nächster Steuerfall →</button>
+      </div>}
+    </article>
+  </section>;
+}
+
 
 function CalculationLab({ task, position, total, confidence, setConfidence, onExit, onComplete }: {
   task: LabTask; position: number; total: number; confidence: Confidence;
