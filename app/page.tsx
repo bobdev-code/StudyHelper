@@ -108,9 +108,10 @@ function pickQuestionsForPoints(items: QuizQuestion[], target: number) {
 }
 
 function SourceBadge({ source }: { source: Flashcard["source"] }) {
+  const language = useLanguage();
   return (
     <details className="source-badge">
-      <summary>Quelle prüfen</summary>
+      <summary>{tr(language,"Quelle prüfen","Check source")}</summary>
       <div>
         <strong>{source.document}</strong>
         <span>{source.location}</span>
@@ -361,6 +362,7 @@ function AuthDialog({ user, language, onClose }: { user: User | null; language: 
 }
 
 function Dashboard({ progress, navigate }: { progress: AppProgress; navigate: (view: View) => void }) {
+  const language = useLanguage();
   const metrics = useMemo(() => {
     const result = { portfolio: { correct: 0, total: 0 }, tax: { correct: 0, total: 0 } };
     progress.answers.forEach((answer) => {
@@ -384,8 +386,8 @@ function Dashboard({ progress, navigate }: { progress: AppProgress; navigate: (v
   return (
     <section className="page dashboard-page">
       <div className="dashboard-heading">
-        <div><p className="eyebrow">PRÜFUNG · 04. AUGUST 2026</p><h1>Guten Abend, Admin</h1><p>Heute zählt nicht Perfektion, sondern der nächste sichere Punkt.</p></div>
-        <div className="countdown"><span className="calendar-icon">▦</span><strong>{daysUntil(progress.settings.examDate)}</strong><span>Tage bis zur Prüfung</span></div>
+        <div><p className="eyebrow">{tr(language,"PRÜFUNG · 04. AUGUST 2026","EXAM · 4 AUGUST 2026")}</p><h1>{tr(language,"Guten Abend, Admin","Good evening, Admin")}</h1><p>{tr(language,"Heute zählt nicht Perfektion, sondern der nächste sichere Punkt.","Today is not about perfection, but about securing the next point.")}</p></div>
+        <div className="countdown"><span className="calendar-icon">▦</span><strong>{daysUntil(progress.settings.examDate)}</strong><span>{tr(language,"Tage bis zur Prüfung","days until the exam")}</span></div>
       </div>
 
       <div className="subject-grid">
@@ -395,61 +397,64 @@ function Dashboard({ progress, navigate }: { progress: AppProgress; navigate: (v
 
       <div className="dashboard-lower">
         <article className="panel goal-panel">
-          <div className="panel-title"><span>◎</span><h2>Punkteziele</h2></div>
+          <div className="panel-title"><span>◎</span><h2>{tr(language,"Punkteziele","Score targets")}</h2></div>
           <div className="goal-scale">
-            {[90, 105, 115].map((goal) => <div key={goal} className={total >= goal ? "goal reached" : goal === 105 ? "goal focus" : "goal"}><strong>{goal}</strong><span>{goal === 90 ? "Bestehen" : goal === 105 ? "Sicherheitspuffer" : "Starkes Ziel"}</span></div>)}
+            {[90, 105, 115].map((goal) => <div key={goal} className={total >= goal ? "goal reached" : goal === 105 ? "goal focus" : "goal"}><strong>{goal}</strong><span>{goal === 90 ? tr(language,"Bestehen","Pass") : goal === 105 ? tr(language,"Sicherheitspuffer","Safety margin") : tr(language,"Starkes Ziel","Strong target")}</span></div>)}
           </div>
           <div className="goal-line"><span style={{ width: `${Math.min(100, (total / 115) * 100)}%` }} /></div>
-          <p className="current-score">Aktuelle Schätzung <strong>{total} / 180</strong></p>
-          <small>Realistischer Korridor: Portfolio {portfolioForecast.low}–{portfolioForecast.high}/90 · Taxation {taxForecast.low}–{taxForecast.high}/90. Gewichtet werden Kompetenz, Zeit und Probeklausuren.</small>
+          <p className="current-score">{tr(language,"Aktuelle Schätzung","Current estimate")} <strong>{total} / 180</strong></p>
+          <small>{tr(language,`Realistischer Korridor: Portfolio ${portfolioForecast.low}–${portfolioForecast.high}/90 · Taxation ${taxForecast.low}–${taxForecast.high}/90. Gewichtet werden Kompetenz, Zeit und Probeklausuren.`,`Realistic range: Portfolio ${portfolioForecast.low}–${portfolioForecast.high}/90 · Taxation ${taxForecast.low}–${taxForecast.high}/90. Mastery, time and mock exams are weighted.`)}</small>
         </article>
 
         <article className="panel topic-panel">
-          <div className="panel-title"><span>◔</span><h2>Themenstatus</h2></div>
+          <div className="panel-title"><span>◔</span><h2>{tr(language,"Themenstatus","Topic status")}</h2></div>
           {weak.length ? weak.map((item) => (
             <div className="topic-row" key={`${item.subject}-${item.topic}`}><span className={item.accuracy >= 75 ? "status-dot safe" : item.accuracy >= 55 ? "status-dot unsure" : "status-dot weak"} /><span>{item.topic}</span><strong>{item.accuracy}%</strong></div>
           )) : <div className="starter-topics"><div><span className="status-dot weak" />CAPM, SML & Beta</div><div><span className="status-dot unsure" />Performance Measures</div><div><span className="status-dot safe" />Taxation basics</div></div>}
         </article>
 
         <article className="panel next-panel">
-          <div className="panel-title"><span>▱</span><h2>Nächste Lerneinheit</h2></div>
-          <div className="recommendation"><span className="rec-icon">◎</span><div><strong>{weak[0]?.topic ?? "CAPM, SML & Beta"}</strong><span>25 Min · 12 Karten · 8 Fragen</span></div></div>
-          <button className="primary-button" onClick={() => navigate("focus")}>Jetzt optimal lernen <span>→</span></button>
-          <button className="text-button" onClick={() => navigate("quiz")}>Diagnosetest öffnen</button>
+          <div className="panel-title"><span>▱</span><h2>{tr(language,"Nächste Lerneinheit","Next study session")}</h2></div>
+          <div className="recommendation"><span className="rec-icon">◎</span><div><strong>{weak[0]?.topic ?? "CAPM, SML & Beta"}</strong><span>{tr(language,"25 Min · 12 Karten · 8 Fragen","25 min · 12 cards · 8 questions")}</span></div></div>
+          <button className="primary-button" onClick={() => navigate("focus")}>{tr(language,"Jetzt optimal lernen","Start optimal session")} <span>→</span></button>
+          <button className="text-button" onClick={() => navigate("quiz")}>{tr(language,"Diagnosetest öffnen","Open assessment")}</button>
         </article>
       </div>
 
-      <div className="micro-stats"><span><strong>{reviewed}</strong> Karten bearbeitet</span><span><strong>{progress.answers.length}</strong> Antworten</span><span><strong>{progress.answers.length ? accuracy : "–"}{progress.answers.length ? "%" : ""}</strong> Trefferquote</span></div>
+      <div className="micro-stats"><span><strong>{reviewed}</strong> {tr(language,"Karten bearbeitet","cards reviewed")}</span><span><strong>{progress.answers.length}</strong> {tr(language,"Antworten","answers")}</span><span><strong>{progress.answers.length ? accuracy : "–"}{progress.answers.length ? "%" : ""}</strong> {tr(language,"Trefferquote","accuracy")}</span></div>
     </section>
   );
 }
 
 function AdaptiveSession({ progress, navigate }: { progress: AppProgress; navigate: (view: View) => void }) {
+  const language = useLanguage();
   const [minutes, setMinutes] = useState(progress.settings.dailyMinutes || 30);
   const queue = adaptiveQueue(progress, minutes);
   const targetView = (subject: Subject, attempts: number): View => attempts === 0 ? "cards" : subject === "portfolio" ? "trainer" : "quiz";
-  return <section className="page"><PageHeading eyebrow="ADAPTIVE LERNSTEUERUNG" title="Jetzt optimal lernen" description="Die Reihenfolge kombiniert fällige Wiederholungen, Scheinsicherheiten, schwache punktestarke Themen und noch nicht abgedeckten Stoff." />
-    <div className="session-length" role="group" aria-label="Dauer wählen">{[5,15,30,60,90].map(value=><button key={value} className={minutes===value?"active":""} onClick={()=>setMinutes(value)}>{value} Min</button>)}</div>
-    <div className="adaptive-layout"><div className="adaptive-queue">{queue.map((item,index)=><article key={`${item.subject}-${item.topic}`} className="adaptive-item"><span>{String(index+1).padStart(2,"0")}</span><div><small>{subjectName[item.subject]} · {item.status}</small><h3>{item.topic}</h3><p>{item.reason} · Mastery {item.mastery}% · {item.attempts} Versuche an {item.days} Lerntag(en)</p></div><button onClick={()=>navigate(targetView(item.subject,item.attempts))}>Starten →</button></article>)}</div>
-      <aside className="panel session-summary"><strong>{minutes}</strong><span>Minuten Fokus</span><p>{queue.filter(item=>item.nextDueAt<=new Date().toISOString()).length} fällige Themen, {queue.filter(item=>item.attempts===0).length} Abdeckungslücken.</p><button className="primary-button" onClick={()=>queue[0]&&navigate(targetView(queue[0].subject,queue[0].attempts))}>Mit Priorität 1 beginnen →</button></aside></div>
+  return <section className="page"><PageHeading eyebrow={tr(language,"ADAPTIVE LERNSTEUERUNG","ADAPTIVE LEARNING")} title={tr(language,"Jetzt optimal lernen","Your optimal session")} description={tr(language,"Die Reihenfolge kombiniert fällige Wiederholungen, Scheinsicherheiten, schwache punktestarke Themen und noch nicht abgedeckten Stoff.","The sequence combines due reviews, false confidence, weak high-value topics and content you have not covered yet.")} />
+    <div className="session-length" role="group" aria-label={tr(language,"Dauer wählen","Choose duration")}>{[5,15,30,60,90].map(value=><button key={value} className={minutes===value?"active":""} onClick={()=>setMinutes(value)}>{value} {tr(language,"Min","min")}</button>)}</div>
+    <div className="adaptive-layout"><div className="adaptive-queue">{queue.map((item,index)=><article key={`${item.subject}-${item.topic}`} className="adaptive-item"><span>{String(index+1).padStart(2,"0")}</span><div><small>{subjectName[item.subject]} · {item.status}</small><h3>{item.topic}</h3><p>{item.reason} · Mastery {item.mastery}% · {item.attempts} {tr(language,"Versuche an","attempts across")} {item.days} {tr(language,"Lerntag(en)","study day(s)")}</p></div><button onClick={()=>navigate(targetView(item.subject,item.attempts))}>{tr(language,"Starten","Start")} →</button></article>)}</div>
+      <aside className="panel session-summary"><strong>{minutes}</strong><span>{tr(language,"Minuten Fokus","focus minutes")}</span><p>{queue.filter(item=>item.nextDueAt<=new Date().toISOString()).length} {tr(language,"fällige Themen","due topics")}, {queue.filter(item=>item.attempts===0).length} {tr(language,"Abdeckungslücken","coverage gaps")}.</p><button className="primary-button" onClick={()=>queue[0]&&navigate(targetView(queue[0].subject,queue[0].attempts))}>{tr(language,"Mit Priorität 1 beginnen","Start with priority 1")} →</button></aside></div>
   </section>;
 }
 
 function MasteryMatrix({ progress, navigate }: { progress: AppProgress; navigate: (view: View) => void }) {
+  const language = useLanguage();
   const rows = topicMastery(progress);
-  return <section className="page"><PageHeading eyebrow="MEHR ALS RICHTIG / FALSCH" title="Kompetenzmatrix" description="Beherrscht bedeutet: wiederholt korrekt, an mehreren Tagen, angemessen schnell und mit realistischer Sicherheit." />
-    <div className="mastery-legend"><span className="status-dot weak" /> Lücke <span className="status-dot unsure" /> im Aufbau <span className="status-dot safe" /> fast sicher / beherrscht</div>
-    <div className="mastery-table"><div className="mastery-head"><span>Kompetenz</span><span>Treffer</span><span>Tempo</span><span>Kalibrierung</span><span>Mastery</span><span>Status</span></div>{rows.map(item=><button key={`${item.subject}-${item.topic}`} onClick={()=>navigate(item.subject==="portfolio"?"trainer":"quiz")}><span><small>{item.subject==="portfolio"?"Portfolio":"Taxation"}</small><b>{item.topic}</b></span><span>{item.attempts?`${item.accuracy}%`:"–"}</span><span>{item.attempts?`${item.speed}%`:"–"}</span><span>{item.attempts?`${item.confidenceCalibration}%`:"–"}</span><span><i style={{width:`${item.mastery}%`}} />{item.mastery}%</span><span className={`mastery-status ${item.status.replaceAll(" ","-")}`}>{item.status}</span></button>)}</div>
+  return <section className="page"><PageHeading eyebrow={tr(language,"MEHR ALS RICHTIG / FALSCH","MORE THAN RIGHT / WRONG")} title={tr(language,"Kompetenzmatrix","Mastery matrix")} description={tr(language,"Beherrscht bedeutet: wiederholt korrekt, an mehreren Tagen, angemessen schnell und mit realistischer Sicherheit.","Mastered means: repeatedly correct, across multiple days, at an appropriate speed and with calibrated confidence.")} />
+    <div className="mastery-legend"><span className="status-dot weak" /> {tr(language,"Lücke","gap")} <span className="status-dot unsure" /> {tr(language,"im Aufbau","developing")} <span className="status-dot safe" /> {tr(language,"fast sicher / beherrscht","nearly secure / mastered")}</div>
+    <div className="mastery-table"><div className="mastery-head"><span>{tr(language,"Kompetenz","Skill")}</span><span>{tr(language,"Treffer","Accuracy")}</span><span>{tr(language,"Tempo","Speed")}</span><span>{tr(language,"Kalibrierung","Calibration")}</span><span>Mastery</span><span>{tr(language,"Status","Status")}</span></div>{rows.map(item=><button key={`${item.subject}-${item.topic}`} onClick={()=>navigate(item.subject==="portfolio"?"trainer":"quiz")}><span><small>{item.subject==="portfolio"?"Portfolio":"Taxation"}</small><b>{item.topic}</b></span><span>{item.attempts?`${item.accuracy}%`:"–"}</span><span>{item.attempts?`${item.speed}%`:"–"}</span><span>{item.attempts?`${item.confidenceCalibration}%`:"–"}</span><span><i style={{width:`${item.mastery}%`}} />{item.mastery}%</span><span className={`mastery-status ${item.status.replaceAll(" ","-")}`}>{item.status}</span></button>)}</div>
   </section>;
 }
 
 function SubjectCard({ subject, score, accuracy, priority = false }: { subject: Subject; score: number; accuracy: number; priority?: boolean }) {
+  const language = useLanguage();
   return (
     <article className={`subject-card ${subject} ${priority ? "priority" : ""}`}>
-      <div className="subject-card-head"><span className="subject-icon">{subject === "portfolio" ? "◎" : "§"}</span><div><p>{priority ? "PRIORITÄT HOCH" : "STABILISIEREN"}</p><h2>{subjectName[subject]}</h2></div></div>
-      <div className="score-row"><strong>{score}</strong><span>/ 90 Punkte</span><b>{accuracy}%</b></div>
+      <div className="subject-card-head"><span className="subject-icon">{subject === "portfolio" ? "◎" : "§"}</span><div><p>{priority ? tr(language,"PRIORITÄT HOCH","HIGH PRIORITY") : tr(language,"STABILISIEREN","STABILISE")}</p><h2>{subjectName[subject]}</h2></div></div>
+      <div className="score-row"><strong>{score}</strong><span>/ 90 {tr(language,"Punkte","points")}</span><b>{accuracy}%</b></div>
       <div className="progress-track"><span style={{ width: `${Math.min(100, (score / 90) * 100)}%` }} /></div>
-      <p className="subject-note">{subject === "portfolio" ? "Intensivpfad · Formeln, Rechenroutine, Interpretation" : "Punkte sichern · Norm, Tatbestand, Rechtsfolge"}</p>
+      <p className="subject-note">{subject === "portfolio" ? tr(language,"Intensivpfad · Formeln, Rechenroutine, Interpretation","Intensive track · formulas, calculations, interpretation") : tr(language,"Punkte sichern · Norm, Tatbestand, Rechtsfolge","Secure points · rule, requirements, legal consequence")}</p>
     </article>
   );
 }
