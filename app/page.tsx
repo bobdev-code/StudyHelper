@@ -27,7 +27,7 @@ import { PortfolioAcademy } from "./portfolioAcademy";
 import { createLabTasks, labErrorByStage, type LabTask } from "@/lib/data/calculationLab";
 import { taxCases, taxCaseErrorByStep, type TaxCase } from "@/lib/data/taxCaseLab";
 import { getRememberMe, getSupabase, setRememberMe } from "@/lib/supabase";
-import { adaptiveQueue, scoreForecast, topicMastery } from "@/lib/adaptive";
+import { adaptiveQueue, scoreForecast, subjectCoverage, topicMastery, type PlanSubject } from "@/lib/adaptive";
 
 type View = "dashboard" | "focus" | "mastery" | "plan" | "cards" | "quiz" | "trainer" | "errors" | "models" | "videos" | "exam";
 
@@ -277,7 +277,7 @@ export default function Home() {
           </button>
         </div>
         {view === "dashboard" && <Dashboard progress={progress} navigate={navigate} />}
-        {view === "focus" && <AdaptiveSession progress={progress} navigate={navigate} />}
+        {view === "focus" && <AdaptiveSession progress={progress} setProgress={setProgress} navigate={navigate} />}
         {view === "mastery" && <MasteryMatrix progress={progress} navigate={navigate} />}
         {view === "plan" && <DailyPlan progress={progress} navigate={navigate} />}
         {view === "cards" && <Cards progress={progress} setProgress={setProgress} />}
@@ -426,16 +426,52 @@ function Dashboard({ progress, navigate }: { progress: AppProgress; navigate: (v
   );
 }
 
-function AdaptiveSession({ progress, navigate }: { progress: AppProgress; navigate: (view: View) => void }) {
+function AdaptiveSession({ progress, setProgress, navigate }: { progress: AppProgress; setProgress: React.Dispatch<React.SetStateAction<AppProgress>>; navigate: (view: View) => void }) {
   const language = useLanguage();
   const [minutes, setMinutes] = useState(progress.settings.dailyMinutes || 30);
-  const queue = adaptiveQueue(progress, minutes);
+  const [subject, setSubject] = useState<PlanSubject>("all");
+  const portfolioWeight = progress.settings.subjectWeights?.portfolio ?? 50;
+  const queue = adaptiveQueue(progress, minutes, subject);
+  const subjectRows = topicMastery(progress);
+  const summary = (value: Subject) => {
+    const rows = subjectRows.filter((item) => item.subject === value);
+    return {
+      mastery: rows.length ? Math.round(rows.reduce((sum, item) => sum + item.mastery, 0) / rows.length) : 0,
+      gaps: rows.filter((item) => item.attempts === 0 || item.mastery < 45).length,
+      due: rows.filter((item) => item.nextDueAt <= new Date().toISOString()).length,
+    };
+  };
+  const portfolioSummary = summary("portfolio");
+  const taxSummary = summary("tax");
   const targetView = (subject: Subject, attempts: number): View => attempts === 0 ? "cards" : subject === "portfolio" ? "trainer" : "quiz";
   return <section className="page"><PageHeading eyebrow={tr(language,"ADAPTIVE LERNSTEUERUNG","ADAPTIVE LEARNING")} title={tr(language,"Jetzt optimal lernen","Your optimal session")} description={tr(language,"Die Reihenfolge kombiniert fällige Wiederholungen, Scheinsicherheiten, schwache punktestarke Themen und noch nicht abgedeckten Stoff.","The sequence combines due reviews, false confidence, weak high-value topics and content you have not covered yet.")} />
     <div className="session-length" role="group" aria-label={tr(language,"Dauer wählen","Choose duration")}>{[5,15,30,60,90].map(value=><button key={value} className={minutes===value?"active":""} onClick={()=>setMinutes(value)}>{value} {tr(language,"Min","min")}</button>)}</div>
+    <div className="subject-plan-tabs" role="group" aria-label={tr(language,"Fachplan wählen","Choose subject plan")}>
+      {(["all","portfolio","tax"] as PlanSubject[]).map((value)=><button key={value} className={subject===value?"active":""} onClick={()=>setSubject(value)}>{value==="all"?tr(language,"Gesamtplan","Combined plan"):value==="portfolio"?"Portfolio Management":"Taxation"}</button>)}
+    </div>
+    <div className="subject-plan-cards">
+      <button className={subject==="portfolio"?"active":""} onClick={()=>setSubject("portfolio")}><span>◎ Portfolio</span><strong>{portfolioSummary.mastery}% Mastery</strong><small>{portfolioSummary.gaps} {tr(language,"Lücken","gaps")} · {portfolioSummary.due} {tr(language,"fällig","due")}</small></button>
+      <button className={subject==="tax"?"active tax":"tax"} onClick={()=>setSubject("tax")}><span>§ Taxation</span><strong>{taxSummary.mastery}% Mastery</strong><small>{taxSummary.gaps} {tr(language,"Lücken","gaps")} · {taxSummary.due} {tr(language,"fällig","due")}</small></button>
+    </div>
+    <article className="panel subject-weight-panel">
+      <div><b>{tr(language,"Persönliche Wochengewichtung","Personal weekly split")}</b><small>{tr(language,"Der Gesamtplan hält beide Fächer sichtbar. Akut fällige Wiederholungen dürfen die Quote übersteuern.","The combined plan keeps both subjects visible. Urgent reviews may override the split.")}</small></div>
+      <label><span>Portfolio {portfolioWeight}%</span><input type="range" min="20" max="80" step="10" value={portfolioWeight} onChange={(event)=>{const portfolio=Number(event.target.value);setProgress(current=>({...current,settings:{...current.settings,subjectWeights:{portfolio,tax:100-portfolio}}}));}}/><span>Taxation {100-portfolioWeight}%</span></label>
+      <div><b>{tr(language,"Tagesziele je Fach","Daily targets by subject")}</b><small>{tr(language,"Minuten, die du heute mindestens je Fach reservieren möchtest.","Minutes you want to reserve for each subject today.")}</small></div>
+      <div className="daily-targets">{(["portfolio","tax"] as Subject[]).map((value)=><label key={value}><span>{value==="portfolio"?"Portfolio":"Taxation"}</span><input type="number" min="5" max="90" step="5" value={progress.settings.dailyTargets?.[value]??20} onChange={(event)=>setProgress(current=>({...current,settings:{...current.settings,dailyTargets:{portfolio:current.settings.dailyTargets?.portfolio??20,tax:current.settings.dailyTargets?.tax??20,[value]:Number(event.target.value)}}}))}/><b>{tr(language,"Min","min")}</b></label>)}</div>
+    </article>
     <div className="adaptive-layout"><div className="adaptive-queue">{queue.map((item,index)=><article key={`${item.subject}-${item.topic}`} className="adaptive-item"><span>{String(index+1).padStart(2,"0")}</span><div><small>{subjectName[item.subject]} · {item.status}</small><h3>{item.topic}</h3><p>{item.reason} · Mastery {item.mastery}% · {item.attempts} {tr(language,"Versuche an","attempts across")} {item.days} {tr(language,"Lerntag(en)","study day(s)")}</p></div><button onClick={()=>navigate(targetView(item.subject,item.attempts))}>{tr(language,"Starten","Start")} →</button></article>)}</div>
-      <aside className="panel session-summary"><strong>{minutes}</strong><span>{tr(language,"Minuten Fokus","focus minutes")}</span><p>{queue.filter(item=>item.nextDueAt<=new Date().toISOString()).length} {tr(language,"fällige Themen","due topics")}, {queue.filter(item=>item.attempts===0).length} {tr(language,"Abdeckungslücken","coverage gaps")}.</p><button className="primary-button" onClick={()=>queue[0]&&navigate(targetView(queue[0].subject,queue[0].attempts))}>{tr(language,"Mit Priorität 1 beginnen","Start with priority 1")} →</button></aside></div>
+      <aside className="panel session-summary"><strong>{minutes}</strong><span>{tr(language,"Minuten Fokus","focus minutes")}</span><p>{queue.filter(item=>item.nextDueAt<=new Date().toISOString()).length} {tr(language,"fällige Themen","due topics")}, {queue.filter(item=>item.attempts===0).length} {tr(language,"Abdeckungslücken","coverage gaps")}.</p><div className="why-card"><b>{tr(language,"Warum Priorität 1?","Why priority 1?")}</b><p>{queue[0] ? tr(language, queue[0].reason, queue[0].reasonKey==="false-confidence"?"Correct false confidence":queue[0].reasonKey==="due"?"Review is due":queue[0].reasonKey==="coverage"?"Extend content coverage":"Close a high-value gap") : "–"}</p></div><button className="primary-button" onClick={()=>queue[0]&&navigate(targetView(queue[0].subject,queue[0].attempts))}>{tr(language,"Mit Priorität 1 beginnen","Start with priority 1")} →</button><button className="secondary-button check-button" onClick={()=>navigate(queue[0]?.subject==="portfolio"?"trainer":"quiz")}>{tr(language,"Erfolgskontrolle mit neuer Variante","Check retention with a new variant")} →</button></aside></div>
+    <CoverageAndCountdown progress={progress} />
   </section>;
+}
+
+function CoverageAndCountdown({ progress }: { progress: AppProgress }) {
+  const language = useLanguage();
+  const remainingDays = Math.max(1, daysUntil(progress.settings.examDate));
+  const rows = (["portfolio","tax"] as Subject[]).map((subject)=>({subject,coverage:subjectCoverage(progress,subject)}));
+  const totalGaps = rows.reduce((sum,row)=>sum+(row.coverage.total-row.coverage.learned),0);
+  const dailyNew = Math.max(1, Math.ceil(totalGaps/remainingDays));
+  return <div className="coverage-section"><div className="coverage-heading"><div><span className="question-type">{tr(language,"STOFFABDECKUNG","CONTENT COVERAGE")}</span><h2>{tr(language,"Vom ersten Kontakt bis klausursicher","From first contact to exam-ready")}</h2></div><p><b>{remainingDays} {tr(language,"Tage","days")}</b> · {tr(language,`ca. ${dailyNew} neue Themen pro Tag`,`about ${dailyNew} new topics per day`)}</p></div><div className="coverage-grid">{rows.map(({subject,coverage})=><article key={subject}><h3>{subjectName[subject]}</h3>{([['learned','Gelernt','Learned'],['practised','Geübt','Practised'],['transferred','Transferiert','Transferred'],['examReady','Klausursicher','Exam-ready']] as const).map(([key,de,en])=><div className="coverage-row" key={key}><span>{tr(language,de,en)}</span><i><b style={{width:`${coverage.percent(coverage[key])}%`}}/></i><strong>{coverage[key]}/{coverage.total}</strong></div>)}</article>)}</div><p className="dynamic-plan-note">{tr(language,"Der Plan wird nach jedem Versuch neu berechnet. Fällige Fehler kommen zuerst; danach schließt du gleichmäßig Abdeckungslücken bis zum 04.08.","The plan recalculates after every attempt. Due errors come first, then coverage gaps are closed steadily until 4 August.")}</p></div>;
 }
 
 function MasteryMatrix({ progress, navigate }: { progress: AppProgress; navigate: (view: View) => void }) {
