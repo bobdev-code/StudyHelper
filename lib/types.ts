@@ -112,6 +112,8 @@ export type AppProgress = {
     dailyMinutes: number;
     examDate: string;
     language?: Language;
+    subjectWeights?: Record<Subject, number>;
+    dailyTargets?: Record<Subject, number>;
   };
 };
 
