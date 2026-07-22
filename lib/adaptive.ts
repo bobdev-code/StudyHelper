@@ -60,14 +60,40 @@ export function scoreForecast(progress: AppProgress, subject: Subject) {
   return { low: Math.max(0, Math.round(central - uncertainty)), high: Math.min(90, Math.round(central + uncertainty)), central };
 }
 
-export function adaptiveQueue(progress: AppProgress, minutes: number) {
+export type PlanSubject = Subject | "all";
+
+export function adaptiveQueue(progress: AppProgress, minutes: number, subject: PlanSubject = "all") {
   const now = Date.now();
-  const rows = topicMastery(progress);
-  return rows.map((item) => {
+  const rows = topicMastery(progress).filter((item) => subject === "all" || item.subject === subject);
+  const ranked = rows.map((item) => {
     const latest = [...progress.answers].reverse().find((answer) => answer.subject === item.subject && answer.topic === item.topic);
     const overdue = new Date(item.nextDueAt).getTime() <= now;
     const dangerous = latest && !latest.correct && latest.confidence === "high";
     const priority = (overdue ? 40 : 0) + (dangerous ? 35 : 0) + (100 - item.mastery) + (item.subject === "portfolio" ? 8 : 0);
-    return { ...item, priority, reason: dangerous ? "Scheinsicherheit korrigieren" : overdue ? "Wiederholung ist fällig" : item.attempts ? "Punktestarke Lücke schließen" : "Stoffabdeckung erweitern" };
-  }).sort((a,b)=>b.priority-a.priority).slice(0, Math.max(3, Math.min(8, Math.ceil(minutes / 7))));
+    const reasonKey = dangerous ? "false-confidence" : overdue ? "due" : item.attempts ? "weak-high-value" : "coverage";
+    return { ...item, priority, reasonKey, reason: dangerous ? "Scheinsicherheit korrigieren" : overdue ? "Wiederholung ist fällig" : item.attempts ? "Punktestarke Lücke schließen" : "Stoffabdeckung erweitern" };
+  }).sort((a,b)=>b.priority-a.priority);
+  const size = Math.max(3, Math.min(8, Math.ceil(minutes / 7)));
+  if (subject !== "all") return ranked.slice(0, size);
+
+  const portfolio = ranked.filter((item) => item.subject === "portfolio");
+  const tax = ranked.filter((item) => item.subject === "tax");
+  const portfolioWeight = progress.settings.subjectWeights?.portfolio ?? 50;
+  let portfolioSlots = Math.round(size * portfolioWeight / 100);
+  portfolioSlots = Math.max(1, Math.min(size - 1, portfolioSlots));
+  const selected = [...portfolio.slice(0, portfolioSlots), ...tax.slice(0, size - portfolioSlots)];
+  return selected.sort((a, b) => b.priority - a.priority);
+}
+
+export function subjectCoverage(progress: AppProgress, subject: Subject) {
+  const rows = topicMastery(progress).filter((item) => item.subject === subject);
+  const total = rows.length || 1;
+  return {
+    total: rows.length,
+    learned: rows.filter((item) => item.attempts > 0).length,
+    practised: rows.filter((item) => item.attempts >= 2).length,
+    transferred: rows.filter((item) => item.days >= 2).length,
+    examReady: rows.filter((item) => item.status === "beherrscht").length,
+    percent: (value: number) => Math.round(value / total * 100),
+  };
 }
