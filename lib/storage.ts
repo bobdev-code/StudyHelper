@@ -15,7 +15,13 @@ export const defaultProgress: AppProgress = {
   answers: [],
   exams: [],
   portfolioAttempts: [],
-  settings: { dailyMinutes: 45, examDate: "2026-08-04T09:00:00-03:00", language: "de" },
+  settings: {
+    dailyMinutes: 45,
+    examDate: "2026-08-04T09:00:00-03:00",
+    language: "de",
+    subjectWeights: { portfolio: 50, tax: 50 },
+    dailyTargets: { portfolio: 20, tax: 20 },
+  },
 };
 
 export function loadProgress(): AppProgress {
