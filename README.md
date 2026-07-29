@@ -11,7 +11,7 @@ npm install
 npm run dev
 ```
 
-Der lokale Entwicklungsserver zeigt die URL im Terminal an. Der Lernstand wird ausschließlich im `localStorage` des verwendeten Browsers gespeichert.
+Der lokale Entwicklungsserver zeigt die URL im Terminal an. Ohne Anmeldung bleibt der Lernstand im versionierten `localStorage`. Mit einem Supabase-Lernkonto werden lokale und entfernte Ereignisse anhand ihrer IDs zusammengeführt, statt den kompletten Stand eines Geräts blind zu überschreiben.
 
 Produktionsprüfung:
 
@@ -27,25 +27,29 @@ Separater Vercel-Build:
 npm run build:vercel
 ```
 
-`vercel.json` wählt dafür den Next.js-Build. Das Projekt kann als Git-Repository in Vercel importiert werden; Datenbank, Anmeldung und Umgebungsvariablen werden nicht benötigt.
+`vercel.json` wählt dafür den Next.js-Build. Die öffentliche Lernapp funktioniert lokal ohne Konto; Anmeldung und geräteübergreifende Synchronisierung verwenden die konfigurierte Supabase-Instanz.
 
 ## Inhalt und Funktionen
 
 - Dashboard mit Countdown, Fachfortschritt, Trefferquote, Themenstatus und Zielen 90/105/115
-- 64 Portfolio- und 55 Taxation-Karteikarten
-- 40 Portfolio- und 30 Taxation-Quizfragen
+- 64 Portfolio- und 75 Taxation-Karteikarten
+- 40 Portfolio- und 50 Taxation-Quizfragen
 - kurze Diagnosetests je Fach
 - vollständige Rechenfälle mit Lösungsweg
 - Leitner-Intervalle, Favoriten, Suche und Filter
 - Fehlerprotokoll mit Antwortzeit, Sicherheit und sieben Fehlerarten
-- 90-Minuten-Prüfungsmodus mit exakt 90 Punkten, verdeckten Lösungen und Themenauswertung
+- fachgetrennte Navigation mit Übersicht, Planen, Lernen und Prüfen
+- 90-Minuten-Prüfungsmodus mit je exakt 90 Punkten, vollständigen Fällen, Freitext, Rechenblatt, Markierungen, Autosave und Teilpunkte-Rubrik
+- gemeinsames Attempt-Modell für Karten, Quiz, Rechenlabor, Tax-Fälle, Portfolio-Klausurwerkstatt und Simulation
+- nachweisbasierte Kompetenzstufen von Abruf über Anwendung und Transfer bis zur Leistung unter Zeitdruck
+- Fehlerreparatur mit neuer Variante und Abschluss erst nach erfolgreicher Anwendung
 - 19 Modelle und Ablaufschemata
 - Quellenreferenz pro Karte, Frage und Modell
 - Offline-Cache nach dem ersten erfolgreichen Laden; keine externen Schriftarten oder APIs
 
 ## Quellenpolitik
 
-Alle fachlichen Inhalte stammen aus den bereitgestellten Kursdateien. Aktuelle offizielle 2025-Unterlagen und Lösungen haben Vorrang. Ältere offizielle 2024-Unterlagen werden nur sichtbar gekennzeichnet verwendet, wenn die entsprechende 2025-Datei beschädigt ist und kein Widerspruch zum 2025-Formelstand festgestellt wurde.
+Alle fachlichen Inhalte stammen aus den bereitgestellten Kursdateien. Aktuelle offizielle 2025-Unterlagen und Lösungen haben Vorrang. Der offizielle EBS-Single-Choice-Fragenkatalog ergänzt 40 geprüfte Tax-Fragen. Die markierte International-Taxation-Altklausur 2023 wird nur für eindeutig markierte und gegengeprüfte Aussagen verwendet. Das Quizlet-Dokument dient ausschließlich als sekundäre Abdeckungs- und Wiederholungsquelle.
 
 Nicht verwendet wurden:
 

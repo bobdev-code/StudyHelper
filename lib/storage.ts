@@ -3,6 +3,8 @@ import type {
   AppProgress,
   CardProgress,
   ExamSession,
+  LearningAttempt,
+  RepairTask,
 } from "./types";
 
 const STORAGE_KEY = "nachpruefung-lerntrainer-progress-v1";
@@ -13,6 +15,8 @@ export const defaultProgress: AppProgress = {
   version: 1,
   cards: {},
   answers: [],
+  attempts: [],
+  repairs: [],
   exams: [],
   portfolioAttempts: [],
   settings: {
@@ -36,6 +40,8 @@ export function loadProgress(): AppProgress {
       ...parsed,
       cards: parsed.cards ?? {},
       answers: parsed.answers ?? [],
+      attempts: parsed.attempts ?? [],
+      repairs: parsed.repairs ?? [],
       exams: parsed.exams ?? [],
       portfolioAttempts: parsed.portfolioAttempts ?? [],
       settings: { ...defaultProgress.settings, ...(parsed.settings ?? {}) },
@@ -47,7 +53,11 @@ export function loadProgress(): AppProgress {
 
 export function saveProgress(progress: AppProgress) {
   if (typeof window !== "undefined") {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(progress));
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(progress));
+    } catch {
+      // The app remains usable when browser storage is unavailable or full.
+    }
   }
 }
 
@@ -87,10 +97,82 @@ export function addAnswer(progress: AppProgress, answer: AnswerRecord): AppProgr
   return { ...progress, answers: [...progress.answers, answer].slice(-2000) };
 }
 
+export function addLearningAttempt(progress: AppProgress, attempt: LearningAttempt): AppProgress {
+  const attempts = [...(progress.attempts ?? []).filter((item) => item.id !== attempt.id), attempt].slice(-3000);
+  const existingRepair = (progress.repairs ?? []).find(
+    (item) => item.subject === attempt.subject && item.topic === attempt.topic && item.status === "open",
+  );
+  let repairs = progress.repairs ?? [];
+
+  if (attempt.score < attempt.maxScore && attempt.errorTypes.length) {
+    const errorType = attempt.errorTypes[0];
+    const repair: RepairTask = {
+      id: existingRepair?.id ?? `repair-${attempt.id}`,
+      sourceAttemptId: attempt.id,
+      subject: attempt.subject,
+      topic: attempt.topic,
+      errorType,
+      prompt: attempt.subject === "portfolio"
+        ? `Löse eine neue Zahlen- oder Sachverhaltsvariante zu „${attempt.topic}“. Prüfe besonders: ${errorType}.`
+        : `Bearbeite einen neuen Fall zu „${attempt.topic}“ mit Problem → Norm → Subsumtion/Rechnung → Rechtsfolge. Fokus: ${errorType}.`,
+      dueAt: new Date(Date.now() + 86_400_000).toISOString(),
+      status: "open",
+    };
+    repairs = [...repairs.filter((item) => item.id !== repair.id), repair].slice(-500);
+  } else if (existingRepair && attempt.stage !== "recall") {
+    const sourceAttempt = (progress.attempts ?? []).find((item) => item.id === existingRepair.sourceAttemptId);
+    const passedWithNewVariant =
+      attempt.maxScore > 0
+      && attempt.score / attempt.maxScore >= 0.7
+      && attempt.variantId !== sourceAttempt?.variantId;
+    if (passedWithNewVariant) {
+      repairs = repairs.map((item) => item.id === existingRepair.id
+        ? { ...item, status: "passed" as const, passedAt: attempt.completedAt }
+        : item);
+    }
+  }
+
+  return { ...progress, attempts, repairs };
+}
+
 export function upsertExam(progress: AppProgress, exam: ExamSession): AppProgress {
   return {
     ...progress,
     exams: [...progress.exams.filter((item) => item.id !== exam.id), exam].slice(-50),
+  };
+}
+
+function newestById<T extends { id: string }>(items: T[], timestamp: (item: T) => string | undefined) {
+  const merged = new Map<string, T>();
+  for (const item of items) {
+    const current = merged.get(item.id);
+    if (!current || (timestamp(item) ?? "") >= (timestamp(current) ?? "")) merged.set(item.id, item);
+  }
+  return [...merged.values()];
+}
+
+export function mergeProgress(local: AppProgress, remote: AppProgress): AppProgress {
+  const cards = { ...remote.cards };
+  for (const [id, localCard] of Object.entries(local.cards)) {
+    const remoteCard = cards[id];
+    if (!remoteCard || (localCard.lastSeenAt ?? localCard.dueAt) >= (remoteCard.lastSeenAt ?? remoteCard.dueAt)) {
+      cards[id] = localCard;
+    }
+  }
+
+  return {
+    ...defaultProgress,
+    ...remote,
+    cards,
+    answers: newestById([...(remote.answers ?? []), ...(local.answers ?? [])], (item) => item.answeredAt).slice(-2000),
+    attempts: newestById([...(remote.attempts ?? []), ...(local.attempts ?? [])], (item) => item.completedAt).slice(-3000),
+    repairs: newestById([...(remote.repairs ?? []), ...(local.repairs ?? [])], (item) => item.passedAt ?? item.dueAt).slice(-500),
+    exams: newestById([...(remote.exams ?? []), ...(local.exams ?? [])], (item) => item.completedAt ?? item.startedAt).slice(-50),
+    portfolioAttempts: newestById(
+      [...(remote.portfolioAttempts ?? []), ...(local.portfolioAttempts ?? [])],
+      (item) => item.completedAt,
+    ).slice(-500),
+    settings: { ...defaultProgress.settings, ...(remote.settings ?? {}), ...(local.settings ?? {}) },
   };
 }
 
