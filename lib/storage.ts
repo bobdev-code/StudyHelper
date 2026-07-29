@@ -5,9 +5,11 @@ import type {
   ExamSession,
   LearningAttempt,
   RepairTask,
+  SavedTaxDiagram,
 } from "./types";
 
 const STORAGE_KEY = "nachpruefung-lerntrainer-progress-v1";
+const LAST_USER_KEY = "nachpruefung-lerntrainer-last-user";
 const DAY = 86_400_000;
 const INTERVALS = [0, 1, 3, 7, 14, 30];
 
@@ -19,6 +21,7 @@ export const defaultProgress: AppProgress = {
   repairs: [],
   exams: [],
   portfolioAttempts: [],
+  taxDiagrams: [],
   settings: {
     dailyMinutes: 45,
     examDate: "2026-08-04T09:00:00-03:00",
@@ -28,10 +31,22 @@ export const defaultProgress: AppProgress = {
   },
 };
 
-export function loadProgress(): AppProgress {
+function storageKey(userId?: string) {
+  return userId ? `${STORAGE_KEY}:user:${userId}` : `${STORAGE_KEY}:guest`;
+}
+
+function hasLearningEvidence(progress: AppProgress) {
+  return Object.keys(progress.cards).length > 0
+    || progress.answers.length > 0
+    || (progress.attempts?.length ?? 0) > 0
+    || progress.exams.length > 0;
+}
+
+export function loadProgress(userId?: string): AppProgress {
   if (typeof window === "undefined") return defaultProgress;
   try {
-    const value = window.localStorage.getItem(STORAGE_KEY);
+    const value = window.localStorage.getItem(storageKey(userId))
+      ?? (!userId ? window.localStorage.getItem(STORAGE_KEY) : null);
     if (!value) return defaultProgress;
     const parsed = JSON.parse(value) as AppProgress;
     if (parsed.version !== 1) return defaultProgress;
@@ -44,6 +59,7 @@ export function loadProgress(): AppProgress {
       repairs: parsed.repairs ?? [],
       exams: parsed.exams ?? [],
       portfolioAttempts: parsed.portfolioAttempts ?? [],
+      taxDiagrams: parsed.taxDiagrams ?? [],
       settings: { ...defaultProgress.settings, ...(parsed.settings ?? {}) },
     };
   } catch {
@@ -51,14 +67,33 @@ export function loadProgress(): AppProgress {
   }
 }
 
-export function saveProgress(progress: AppProgress) {
+export function saveProgress(progress: AppProgress, userId?: string) {
   if (typeof window !== "undefined") {
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(progress));
+      window.localStorage.setItem(storageKey(userId), JSON.stringify(progress));
     } catch {
       // The app remains usable when browser storage is unavailable or full.
     }
   }
+}
+
+export function prepareProgressForUser(current: AppProgress, userId: string) {
+  if (typeof window === "undefined") return loadProgress(userId);
+  const previousUser = window.localStorage.getItem(LAST_USER_KEY);
+  const userProgress = loadProgress(userId);
+  window.localStorage.setItem(LAST_USER_KEY, userId);
+  if (!previousUser && hasLearningEvidence(current) && !hasLearningEvidence(userProgress)) {
+    const imported = mergeProgress(userProgress, current);
+    window.localStorage.removeItem(storageKey());
+    return imported;
+  }
+  return userProgress;
+}
+
+export function clearLastProgressUser(userId?: string) {
+  if (typeof window === "undefined") return;
+  const previousUser = window.localStorage.getItem(LAST_USER_KEY);
+  if (!userId || previousUser === userId) window.localStorage.removeItem(LAST_USER_KEY);
 }
 
 export function reviewCard(
@@ -142,6 +177,16 @@ export function upsertExam(progress: AppProgress, exam: ExamSession): AppProgres
   };
 }
 
+export function upsertTaxDiagram(progress: AppProgress, diagram: SavedTaxDiagram): AppProgress {
+  return {
+    ...progress,
+    taxDiagrams: [
+      ...(progress.taxDiagrams ?? []).filter((item) => item.id !== diagram.id),
+      diagram,
+    ].slice(-50),
+  };
+}
+
 function newestById<T extends { id: string }>(items: T[], timestamp: (item: T) => string | undefined) {
   const merged = new Map<string, T>();
   for (const item of items) {
@@ -167,16 +212,27 @@ export function mergeProgress(local: AppProgress, remote: AppProgress): AppProgr
     answers: newestById([...(remote.answers ?? []), ...(local.answers ?? [])], (item) => item.answeredAt).slice(-2000),
     attempts: newestById([...(remote.attempts ?? []), ...(local.attempts ?? [])], (item) => item.completedAt).slice(-3000),
     repairs: newestById([...(remote.repairs ?? []), ...(local.repairs ?? [])], (item) => item.passedAt ?? item.dueAt).slice(-500),
-    exams: newestById([...(remote.exams ?? []), ...(local.exams ?? [])], (item) => item.completedAt ?? item.startedAt).slice(-50),
+    exams: newestById(
+      [...(remote.exams ?? []), ...(local.exams ?? [])],
+      (item) => item.updatedAt ?? item.completedAt ?? item.startedAt,
+    ).slice(-50),
     portfolioAttempts: newestById(
       [...(remote.portfolioAttempts ?? []), ...(local.portfolioAttempts ?? [])],
       (item) => item.completedAt,
     ).slice(-500),
+    activeStudySession: (() => {
+      const candidates = [remote.activeStudySession, local.activeStudySession].filter(Boolean);
+      return candidates.sort((a, b) => (a!.updatedAt).localeCompare(b!.updatedAt)).at(-1);
+    })(),
+    taxDiagrams: newestById(
+      [...(remote.taxDiagrams ?? []), ...(local.taxDiagrams ?? [])],
+      (item) => item.updatedAt,
+    ).slice(-50),
     settings: { ...defaultProgress.settings, ...(remote.settings ?? {}), ...(local.settings ?? {}) },
   };
 }
 
-export function resetProgress(): AppProgress {
-  if (typeof window !== "undefined") window.localStorage.removeItem(STORAGE_KEY);
+export function resetProgress(userId?: string): AppProgress {
+  if (typeof window !== "undefined") window.localStorage.removeItem(storageKey(userId));
   return structuredClone(defaultProgress);
 }

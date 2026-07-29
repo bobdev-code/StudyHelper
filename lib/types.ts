@@ -137,13 +137,59 @@ export type RepairTask = {
   passedAt?: string;
 };
 
+export type StudySessionItem = {
+  id: string;
+  subject: Subject;
+  topic: string;
+  view: "cards" | "quiz";
+  estimatedMinutes: number;
+};
+
+export type StudySession = {
+  id: string;
+  subject: Subject | "all";
+  plannedMinutes: number;
+  startedAt: string;
+  updatedAt: string;
+  currentIndex: number;
+  items: StudySessionItem[];
+  completedItemIds: string[];
+  baselineMastery: Record<Subject, number>;
+  completedAt?: string;
+};
+
+export type TaxDiagramNode = {
+  id: number;
+  kind: "person" | "partnership" | "corporation" | "building";
+  x: number;
+  y: number;
+  label: string;
+};
+
+export type TaxDiagramEdge = {
+  id: number;
+  from: number;
+  to: number;
+  relation: "participation" | "rental" | "loan" | "dividend";
+};
+
+export type SavedTaxDiagram = {
+  id: string;
+  name: string;
+  nodes: TaxDiagramNode[];
+  edges: TaxDiagramEdge[];
+  updatedAt: string;
+};
+
 export type ExamSession = {
   id: string;
   subject: Subject;
   examModeId?: ExamModeId;
   durationMinutes?: number;
   startedAt: string;
+  updatedAt?: string;
   completedAt?: string;
+  currentBlockId?: string;
   questionIds: string[];
   answers: Record<string, number | number[] | string>;
   confidences: Record<string, Confidence>;
@@ -162,6 +208,8 @@ export type AppProgress = {
   repairs?: RepairTask[];
   exams: ExamSession[];
   portfolioAttempts?: PortfolioAttempt[];
+  activeStudySession?: StudySession;
+  taxDiagrams?: SavedTaxDiagram[];
   settings: {
     dailyMinutes: number;
     examDate: string;
