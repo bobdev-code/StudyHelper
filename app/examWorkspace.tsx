@@ -1,23 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { examPlans, type ExamBlock } from "@/lib/data/exams";
+import { useCallback, useEffect, useState } from "react";
+import { examModeForSession, examModes, type ExamBlock } from "@/lib/data/exams";
 import { addLearningAttempt, upsertExam } from "@/lib/storage";
-import type { AppProgress, Confidence, ErrorType, ExamSession, Language, Subject } from "@/lib/types";
-
-const subjectLabel: Record<Subject, string> = {
-  portfolio: "Portfolio Management",
-  tax: "German & International Taxation",
-};
+import type { AppProgress, Confidence, ErrorType, ExamModeId, ExamSession, Language, Subject } from "@/lib/types";
 
 const tr = (language: Language, de: string, en: string) => language === "de" ? de : en;
 
 function examId() {
   return `exam-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function totalPoints(blocks: ExamBlock[]) {
-  return blocks.reduce((sum, block) => sum + block.points, 0);
 }
 
 function Source({ block, language }: { block: ExamBlock; language: Language }) {
@@ -35,12 +26,14 @@ export function ExamWorkspace({
   language: Language;
   initialSubject?: Subject;
 }) {
-  const [subject, setSubject] = useState<Subject>(initialSubject ?? "portfolio");
+  const [modeId, setModeId] = useState<ExamModeId>(initialSubject === "tax" ? "tax-combined" : "portfolio-full");
   const [session, setSession] = useState<ExamSession>();
   const [index, setIndex] = useState(0);
-  const [seconds, setSeconds] = useState(90 * 60);
+  const [seconds, setSeconds] = useState(examModes[modeId].durationMinutes * 60);
   const [reviewing, setReviewing] = useState(false);
-  const plan = examPlans[session?.subject ?? subject];
+  const selectedMode = examModes[modeId];
+  const activeMode = session ? examModeForSession(session.subject, session.examModeId) : selectedMode;
+  const plan = activeMode.blocks;
   const block = plan[index];
   const incomplete = [...progress.exams].reverse().find((item) => !item.completedAt);
   const ungraded = [...progress.exams].reverse().find((item) => item.completedAt && item.score === undefined);
@@ -58,7 +51,7 @@ export function ExamWorkspace({
     if (!session || reviewing || session.completedAt) return;
     const update = () => {
       const elapsed = Math.floor((Date.now() - new Date(session.startedAt).getTime()) / 1000);
-      const remaining = Math.max(0, 90 * 60 - elapsed);
+      const remaining = Math.max(0, (session.durationMinutes ?? activeMode.durationMinutes) * 60 - elapsed);
       setSeconds(remaining);
       if (remaining === 0) finishWriting();
     };
@@ -68,7 +61,7 @@ export function ExamWorkspace({
       window.cancelAnimationFrame(frame);
       window.clearInterval(timer);
     };
-  }, [finishWriting, reviewing, session]);
+  }, [activeMode.durationMinutes, finishWriting, reviewing, session]);
 
   const save = (next: ExamSession) => {
     setSession(next);
@@ -76,10 +69,13 @@ export function ExamWorkspace({
   };
 
   const start = () => {
-    const blocks = examPlans[subject];
+    const mode = examModes[modeId];
+    const blocks = mode.blocks;
     const created: ExamSession = {
       id: examId(),
-      subject,
+      subject: mode.subject,
+      examModeId: mode.id,
+      durationMinutes: mode.durationMinutes,
       startedAt: new Date().toISOString(),
       questionIds: blocks.map((item) => item.id),
       answers: {},
@@ -91,11 +87,11 @@ export function ExamWorkspace({
     save(created);
     setIndex(0);
     setReviewing(false);
-    setSeconds(90 * 60);
+    setSeconds(mode.durationMinutes * 60);
   };
 
   const resume = (exam: ExamSession, review: boolean) => {
-    setSubject(exam.subject);
+    setModeId(examModeForSession(exam.subject, exam.examModeId).id);
     setSession(exam);
     setIndex(0);
     setReviewing(review);
@@ -140,7 +136,7 @@ export function ExamWorkspace({
     if (!session) return;
     const completedAt = session.completedAt ?? new Date().toISOString();
     const score = plan.reduce((sum, item) => sum + effectiveScore(item), 0);
-    const finalSession: ExamSession = { ...session, completedAt, score, maxScore: 90 };
+    const finalSession: ExamSession = { ...session, completedAt, score, maxScore: activeMode.maxPoints };
     setProgress((current) => {
       let next = upsertExam(current, finalSession);
       for (const item of plan) {
@@ -173,32 +169,51 @@ export function ExamWorkspace({
     setIndex(0);
   };
 
-  const answeredCount = useMemo(
-    () => session ? plan.filter((item) => {
-      const value = session.answers[item.id];
-      return typeof value === "string" ? value.trim().length > 0 : value !== undefined;
-    }).length : 0,
-    [plan, session],
-  );
+  const answeredCount = session ? plan.filter((item) => {
+    const value = session.answers[item.id];
+    return typeof value === "string" ? value.trim().length > 0 : value !== undefined;
+  }).length : 0;
 
   if (!session) {
     return <section className="page exam-workspace">
       <div className="page-heading">
-        <p className="eyebrow">{tr(language, "90 MINUTEN · 90 PUNKTE · QUELLENGEBUNDEN", "90 MINUTES · 90 POINTS · SOURCE-BOUND")}</p>
-        <h1>{tr(language, "Realistische Prüfungssimulation", "Realistic exam simulation")}</h1>
-        <p>{tr(language, "Vollständige Fälle, Rechenwege, Freitext, Markierungen und Teilpunkte statt einer zufälligen Sammlung von Multiple-Choice-Fragen.", "Complete cases, calculations, free text, flags and partial credit instead of a random multiple-choice set.")}</p>
+        <p className="eyebrow">{tr(language, "TEILPRÜFUNGEN & GESAMTPRÜFUNGEN · QUELLENGEBUNDEN", "SECTION & FULL EXAMS · SOURCE-BOUND")}</p>
+        <h1>{tr(language, "Klausurnahe Prüfungssimulation", "Exam-realistic simulation")}</h1>
+        <p>{tr(language, "Taxation folgt der echten Gewichtung: 60 Minuten German Taxation und maximal 30 Minuten International Taxation. Beide Teile lassen sich einzeln oder als 90-Minuten-Gesamtprüfung absolvieren.", "Taxation follows the real weighting: 60 minutes German Taxation and no more than 30 minutes International Taxation. Complete either section alone or take the combined 90-minute exam.")}</p>
       </div>
-      <div className="exam-subject-cards">
-        {(["portfolio", "tax"] as Subject[]).map((item) => <button key={item} className={subject === item ? "selected" : ""} onClick={() => setSubject(item)}>
-          <span>{item === "portfolio" ? "◎" : "§"}</span>
-          <strong>{subjectLabel[item]}</strong>
-          <small>{examPlans[item].length} {tr(language, "Prüfungsblöcke", "exam blocks")} · {totalPoints(examPlans[item])} P</small>
-        </button>)}
+      <div className="exam-mode-groups">
+        <div>
+          <h2>Portfolio Management</h2>
+          <div className="exam-subject-cards">
+            {(["portfolio-full"] as ExamModeId[]).map((item) => {
+              const mode = examModes[item];
+              return <button key={item} className={modeId === item ? "selected" : ""} onClick={() => { setModeId(item); setSeconds(mode.durationMinutes * 60); }}>
+                <span>◎</span>
+                <strong>{tr(language, mode.labelDe, mode.labelEn)}</strong>
+                <small>{mode.durationMinutes} Min · {mode.maxPoints} P · {mode.blocks.length} {tr(language, "Blöcke", "blocks")}</small>
+              </button>;
+            })}
+          </div>
+        </div>
+        <div>
+          <h2>Taxation</h2>
+          <div className="exam-subject-cards tax-exam-cards">
+            {(["tax-german", "tax-international", "tax-combined"] as ExamModeId[]).map((item) => {
+              const mode = examModes[item];
+              return <button key={item} className={modeId === item ? "selected" : ""} onClick={() => { setModeId(item); setSeconds(mode.durationMinutes * 60); }}>
+                <span>§</span>
+                <strong>{tr(language, mode.labelDe, mode.labelEn)}</strong>
+                <small>{mode.durationMinutes} Min · {mode.maxPoints} P · {tr(language, mode.descriptionDe, mode.descriptionEn)}</small>
+              </button>;
+            })}
+          </div>
+        </div>
       </div>
       <article className="exam-readiness panel">
-        <div className="exam-clock">90:00<small>{tr(language, "Minuten", "minutes")}</small></div>
+        <div className="exam-clock">{selectedMode.durationMinutes}:00<small>{tr(language, "Minuten", "minutes")}</small></div>
         <div>
-          <h2>{tr(language, "Vor dem Start", "Before you start")}</h2>
+          <h2>{tr(language, selectedMode.labelDe, selectedMode.labelEn)}</h2>
+          <p className="exam-selection-summary">{tr(language, selectedMode.descriptionDe, selectedMode.descriptionEn)} · {selectedMode.maxPoints} {tr(language, "Punkte", "points")}</p>
           <ul>
             <li>{tr(language, "Antworten und Rechenblatt werden automatisch gespeichert.", "Answers and scratchpads are saved automatically.")}</li>
             <li>{tr(language, "Aufgaben können markiert und später bearbeitet werden.", "Blocks can be flagged and revisited.")}</li>
@@ -216,7 +231,7 @@ export function ExamWorkspace({
   if (!block) return null;
 
   if (!reviewing && session.score !== undefined) {
-    return <section className="page exam-workspace"><div className="exam-final panel"><span className="result-ring mastered">{session.score}<small>/ 90</small></span><h1>{tr(language, "Prüfung ausgewertet", "Exam graded")}</h1><p>{tr(language, "Das Ergebnis ist jetzt mit der Kompetenzmatrix, Prognose und Fehlerreparatur verknüpft.", "The result is now linked to mastery, forecasting and error repair.")}</p><button className="primary-button" onClick={() => setSession(undefined)}>{tr(language, "Zur Prüfungswahl", "Choose another exam")} →</button></div></section>;
+    return <section className="page exam-workspace"><div className="exam-final panel"><span className="result-ring mastered">{session.score}<small>/ {session.maxScore ?? activeMode.maxPoints}</small></span><h1>{tr(language, "Prüfung ausgewertet", "Exam graded")}</h1><p>{tr(language, "Das Ergebnis ist jetzt mit der Kompetenzmatrix, Prognose und Fehlerreparatur verknüpft. Teilprüfungen fließen entsprechend ihrer Punktzahl gewichtet ein.", "The result is now linked to mastery, forecasting and error repair. Section exams are weighted by their point value.")}</p><button className="primary-button" onClick={() => setSession(undefined)}>{tr(language, "Zur Prüfungswahl", "Choose another exam")} →</button></div></section>;
   }
 
   return <section className="page exam-workspace">

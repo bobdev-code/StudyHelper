@@ -33,13 +33,14 @@ npm run build:vercel
 
 - Dashboard mit Countdown, Fachfortschritt, Trefferquote, Themenstatus und Zielen 90/105/115
 - 64 Portfolio- und 75 Taxation-Karteikarten
-- 40 Portfolio- und 50 Taxation-Quizfragen
+- 49 Portfolio- und 57 Taxation-Quizfragen mit drei sichtbaren Schwierigkeitsstufen
 - kurze Diagnosetests je Fach
 - vollständige Rechenfälle mit Lösungsweg
 - Leitner-Intervalle, Favoriten, Suche und Filter
 - Fehlerprotokoll mit Antwortzeit, Sicherheit und sieben Fehlerarten
 - fachgetrennte Navigation mit Übersicht, Planen, Lernen und Prüfen
-- 90-Minuten-Prüfungsmodus mit je exakt 90 Punkten, vollständigen Fällen, Freitext, Rechenblatt, Markierungen, Autosave und Teilpunkte-Rubrik
+- Tax-Prüfungsmodus als German-Teil (60 Min/60 P), International-Teil (30 Min/30 P) oder Gesamtprüfung (90 Min/90 P im Verhältnis 2:1); Portfolio bleibt eine vollständige 90-Minuten-/90-Punkte-Simulation
+- vollständige Fälle, Freitext, Rechenblatt, Markierungen, Autosave und Teilpunkte-Rubrik
 - gemeinsames Attempt-Modell für Karten, Quiz, Rechenlabor, Tax-Fälle, Portfolio-Klausurwerkstatt und Simulation
 - nachweisbasierte Kompetenzstufen von Abruf über Anwendung und Transfer bis zur Leistung unter Zeitdruck
 - Fehlerreparatur mit neuer Variante und Abschluss erst nach erfolgreicher Anwendung

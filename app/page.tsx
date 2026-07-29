@@ -17,6 +17,7 @@ import type {
   AnswerRecord,
   AppProgress,
   Confidence,
+  Difficulty,
   ErrorType,
   Flashcard,
   Language,
@@ -99,6 +100,18 @@ function pct(value: number, max: number) {
 
 function shuffle<T>(items: T[]) {
   return [...items].sort(() => Math.random() - 0.5);
+}
+
+function shuffleQuestionOptions(question: QuizQuestion): QuizQuestion {
+  const entries = shuffle(question.options.map((option, originalIndex) => ({ option, originalIndex })));
+  const remap = (originalIndex: number) => entries.findIndex((entry) => entry.originalIndex === originalIndex);
+  return {
+    ...question,
+    options: entries.map((entry) => entry.option),
+    correct: Array.isArray(question.correct)
+      ? question.correct.map(remap).sort((a, b) => a - b)
+      : remap(question.correct),
+  };
 }
 
 function SourceBadge({ source }: { source: Flashcard["source"] }) {
@@ -594,6 +607,7 @@ function Quiz({ setProgress, preset, initialSubject, onPresetApplied }: { setPro
   const language = useLanguage();
   const [subject, setSubject] = useState<Subject | "all">(preset === "tax-diagnostic" ? "tax" : initialSubject);
   const [diagnostic, setDiagnostic] = useState(preset === "tax-diagnostic");
+  const [difficulty, setDifficulty] = useState<Difficulty | "all">("all");
   const [session, setSession] = useState<QuizQuestion[]>([]);
   const [sessionResults, setSessionResults] = useState<AnswerRecord[]>([]);
   const [showResult, setShowResult] = useState(false);
@@ -607,17 +621,21 @@ function Quiz({ setProgress, preset, initialSubject, onPresetApplied }: { setPro
 
   const start = () => {
     onPresetApplied();
-    const pool = quizQuestions.filter((item) => (subject === "all" || item.subject === subject) && (!diagnostic || item.diagnostic));
+    const pool = quizQuestions.filter((item) =>
+      (subject === "all" || item.subject === subject)
+      && (!diagnostic || item.diagnostic)
+      && (diagnostic || difficulty === "all" || item.difficulty === difficulty)
+    );
     const broad = [...new Map(shuffle(pool).map((item) => [`${item.subject}-${item.topic}`, item])).values()];
     const target = diagnostic ? (subject === "all" ? 18 : 12) : 12;
-    setSession([...broad, ...shuffle(pool.filter((item) => !broad.includes(item)))].slice(0, target));
+    setSession([...broad, ...shuffle(pool.filter((item) => !broad.includes(item)))].slice(0, target).map(shuffleQuestionOptions));
     setSessionResults([]); setShowResult(false);
     setIndex(0); setAnswer(undefined); setChecked(false); started.current = Date.now();
   };
   const check = () => {
     if (!question || answer === undefined) return;
     const correct = isCorrect(question, answer);
-    const record: AnswerRecord = { id: uid("answer"), questionId: question.id, subject: question.subject, topic: question.topic, correct, durationMs: Date.now() - started.current, confidence, errorType: correct ? undefined : errorType, answeredAt: new Date().toISOString() };
+    const record: AnswerRecord = { id: uid("answer"), questionId: question.id, subject: question.subject, topic: question.topic, correct, durationMs: Date.now() - started.current, confidence, errorType: correct ? undefined : errorType, answeredAt: new Date().toISOString(), difficulty: question.difficulty };
     setProgress((current) => addLearningAttempt(addAnswer(current, record), {
       id: `answer-${record.id}`,
       activityId: question.id,
@@ -625,7 +643,7 @@ function Quiz({ setProgress, preset, initialSubject, onPresetApplied }: { setPro
       subject: question.subject,
       topic: question.topic,
       mode: "quiz",
-      stage: question.type === "calculation" || question.type === "legal-rule" ? "application" : "recall",
+      stage: question.difficulty === 3 ? "transfer" : question.type === "calculation" || question.type === "legal-rule" ? "application" : "recall",
       score: correct ? question.points : 0,
       maxScore: question.points,
       durationMs: record.durationMs,
@@ -633,6 +651,7 @@ function Quiz({ setProgress, preset, initialSubject, onPresetApplied }: { setPro
       errorTypes: correct ? [] : [errorType],
       hintsUsed: 0,
       completedAt: record.answeredAt,
+      difficulty: question.difficulty,
     }));
     setSessionResults((current) => [...current, record]);
     setChecked(true);
@@ -649,23 +668,42 @@ function Quiz({ setProgress, preset, initialSubject, onPresetApplied }: { setPro
       const falseHigh = answers.filter((item) => !item.correct && item.confidence === "high").length;
       return { ...group, correct, total: answers.length, accuracy: pct(correct, answers.length), falseHigh };
     }).sort((a, b) => a.accuracy - b.accuracy);
-    return <section className="page"><PageHeading eyebrow="DIAGNOSE ABGESCHLOSSEN" title={`${pct(sessionResults.filter((item) => item.correct).length, sessionResults.length)}% richtig`} description="Das Kompetenzprofil trennt Trefferquote und Scheinsicherheit. Themen mit sicher falschen Antworten erhalten höchste Priorität." />
+    const difficultyResults = ([1, 2, 3] as Difficulty[]).map((level) => {
+      const answers = sessionResults.filter((item) => item.difficulty === level);
+      return { level, correct: answers.filter((item) => item.correct).length, total: answers.length };
+    }).filter((item) => item.total > 0);
+    return <section className="page"><PageHeading eyebrow={diagnostic ? tr(language,"DIAGNOSE ABGESCHLOSSEN","DIAGNOSTIC COMPLETE") : tr(language,"QUIZ ABGESCHLOSSEN","QUIZ COMPLETE")} title={`${pct(sessionResults.filter((item) => item.correct).length, sessionResults.length)}% ${tr(language,"richtig","correct")}`} description={tr(language,"Das Kompetenzprofil trennt Trefferquote, Schwierigkeit und Scheinsicherheit. Themen mit sicher falschen Antworten erhalten höchste Priorität.","The competence profile separates accuracy, difficulty and false confidence. Topics answered incorrectly with high confidence receive top priority.")} />
+      <div className="difficulty-result-grid">{difficultyResults.map((item) => <article key={item.level}><span>Level {item.level}</span><strong>{pct(item.correct, item.total)}%</strong><small>{item.correct}/{item.total} {tr(language,"richtig","correct")}</small></article>)}</div>
       <div className="competence-grid">{grouped.map((item) => <article className="competence-card" key={`${item.subject}-${item.topic}`}><div><span>{subjectName[item.subject]}</span><b className={item.accuracy >= 75 ? "safe" : item.accuracy >= 50 ? "unsure" : "weak"}>{item.accuracy >= 75 ? "stabil" : item.falseHigh ? "Scheinsicherheit" : item.accuracy >= 50 ? "unsicher" : "Lücke"}</b></div><h3>{item.topic}</h3><div className="progress-track"><span style={{ width: `${item.accuracy}%` }} /></div><p>{item.correct}/{item.total} richtig{item.falseHigh ? ` · ${item.falseHigh}× sicher falsch` : ""}</p></article>)}</div>
-      <button className="primary-button result-restart" onClick={() => { setShowResult(false); setSubject("all"); setDiagnostic(true); }}>Neue Gesamtdiagnose vorbereiten →</button>
+      <button className="primary-button result-restart" onClick={() => { setShowResult(false); if (diagnostic) setSubject("all"); }}>{tr(language,diagnostic ? "Neue Gesamtdiagnose vorbereiten" : "Neues Quiz vorbereiten",diagnostic ? "Prepare another full diagnostic" : "Prepare another quiz")} →</button>
     </section>;
   }
 
   if (!question) return (
     <section className="page"><PageHeading eyebrow={tr(language,"AKTIVES ABRUFEN","ACTIVE RECALL")} title="Quiz" description={tr(language,"Prüfungsfragen mit deutscher Verständnishilfe, sofortigem Feedback und persönlichem Fehlerprotokoll.","Exam questions with immediate feedback and a personal error log.")} />
       <div className="setup-grid three"><article className={`setup-card ${subject === "portfolio" ? "selected" : ""}`} onClick={() => setSubject("portfolio")}><span>◎</span><h2>Portfolio Management</h2><p>{quizQuestions.filter((item) => item.subject === "portfolio").length} geprüfte Fragen</p></article><article className={`setup-card ${subject === "tax" ? "selected tax" : ""}`} onClick={() => setSubject("tax")}><span>§</span><h2>Taxation</h2><p>{quizQuestions.filter((item) => item.subject === "tax").length} geprüfte Fragen</p></article><article className={`setup-card ${subject === "all" ? "selected combined" : ""}`} onClick={() => { setSubject("all"); setDiagnostic(true); }}><span>◫</span><h2>Gesamtdiagnose</h2><p>18 Fragen aus beiden Fächern</p></article></div>
-      <div className="quiz-start panel"><label className="switch-row"><input type="checkbox" checked={diagnostic} onChange={(event) => setDiagnostic(event.target.checked)} /><span><strong>Adaptiver Diagnosetest</strong><small>{subject === "all" ? "18" : "12"} breit gestreute Fragen mit Sicherheitsabgleich</small></span></label><button className="primary-button" onClick={start}>{diagnostic ? "Diagnosetest starten" : "12 Fragen starten"} →</button></div>
+      <div className="difficulty-panel panel">
+        <div><span className="question-type">{tr(language,"SCHWIERIGKEIT","DIFFICULTY")}</span><h2>{tr(language,"An deinem Lernstand trainieren","Train at your current level")}</h2><p>{tr(language,"Basis prüft Begriffe und Formeln, Anwendung verlangt die richtige Methode, Transfer kombiniert mehrere Schritte und typische Fallen.","Foundation tests concepts and formulas, Application requires the correct method, and Transfer combines several steps and common traps.")}</p></div>
+        <div className="difficulty-buttons">
+          {([
+            ["all", tr(language,"Gemischt","Mixed"), tr(language,"alle Level","all levels")],
+            [1, tr(language,"Basis","Foundation"), tr(language,"direkter Abruf","direct recall")],
+            [2, tr(language,"Anwendung","Application"), tr(language,"Methode wählen","choose the method")],
+            [3, "Transfer", tr(language,"mehrstufig & neu","multi-step & novel")],
+          ] as const).map(([level, label, note]) => {
+            const count = quizQuestions.filter((item) => (subject === "all" || item.subject === subject) && (level === "all" || item.difficulty === level)).length;
+            return <button key={level} disabled={diagnostic} className={difficulty === level ? "active" : ""} onClick={() => setDifficulty(level)}><strong>{label}</strong><small>{note} · {count}</small></button>;
+          })}
+        </div>
+      </div>
+      <div className="quiz-start panel"><label className="switch-row"><input type="checkbox" checked={diagnostic} onChange={(event) => setDiagnostic(event.target.checked)} /><span><strong>{tr(language,"Adaptiver Diagnosetest","Adaptive diagnostic")}</strong><small>{tr(language,`${subject === "all" ? "18" : "12"} breit gestreute Fragen über alle Level mit Sicherheitsabgleich`,`${subject === "all" ? "18" : "12"} broadly distributed questions across all levels with confidence calibration`)}</small></span></label><button className="primary-button" onClick={start}>{diagnostic ? tr(language,"Diagnosetest starten","Start diagnostic") : tr(language,"12 Fragen starten","Start 12 questions")} →</button></div>
     </section>
   );
 
   return (
     <section className="page quiz-page">
       <div className="quiz-progress"><span style={{ width: `${((index + 1) / session.length) * 100}%` }} /></div>
-      <div className="quiz-top"><span>{subjectName[question.subject]} · {question.topic}</span><strong>Frage {index + 1} / {session.length}</strong><span>{question.points} Punkte</span></div>
+      <div className="quiz-top"><span>{subjectName[question.subject]} · {question.topic}</span><strong>Frage {index + 1} / {session.length}</strong><span>Level {question.difficulty} · {question.points} Punkte</span></div>
       <article className="question-card"><span className="question-type">{question.type.replace("-", " ")}</span><h1>{question.prompt}</h1>{language === "de" && question.helpDe && <p className="german-help">Deutsch: {question.helpDe}</p>}
         <div className="options">{question.options.map((option, optionIndex) => <button key={option} disabled={checked} className={`${!Array.isArray(answer) && answer === optionIndex ? "selected" : ""} ${checked && !Array.isArray(question.correct) && question.correct === optionIndex ? "correct" : ""} ${checked && !Array.isArray(answer) && answer === optionIndex && !isCorrect(question, answer) ? "incorrect" : ""}`} onClick={() => setAnswer(optionIndex)}><span>{String.fromCharCode(65 + optionIndex)}</span>{option}</button>)}</div>
         {!checked && <div className="answer-meta"><label>Sicherheit<select value={confidence} onChange={(event) => setConfidence(event.target.value as Confidence)}><option value="low">niedrig</option><option value="medium">mittel</option><option value="high">hoch</option></select></label><label>Falls falsch: Fehlerart<select value={errorType} onChange={(event) => setErrorType(event.target.value as ErrorType)}>{errorTypes.map((item) => <option key={item}>{item}</option>)}</select></label></div>}

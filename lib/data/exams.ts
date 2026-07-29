@@ -1,4 +1,4 @@
-import type { SourceRef, Subject } from "../types";
+import type { ExamModeId, SourceRef, Subject } from "../types";
 
 export type ExamRubricItem = {
   label: string;
@@ -19,6 +19,18 @@ export type ExamBlock = {
   rubric: ExamRubricItem[];
   modelAnswer: string;
   source: SourceRef;
+};
+
+export type ExamMode = {
+  id: ExamModeId;
+  subject: Subject;
+  labelDe: string;
+  labelEn: string;
+  descriptionDe: string;
+  descriptionEn: string;
+  durationMinutes: number;
+  maxPoints: number;
+  blocks: ExamBlock[];
 };
 
 const portfolioExam = (page: string): SourceRef => ({
@@ -321,3 +333,56 @@ export const examPlans: Record<Subject, ExamBlock[]> = {
   tax: taxExamPlan,
 };
 
+const germanTaxExamPlan = taxExamPlan.slice(0, 4);
+const internationalTaxExamPlan = taxExamPlan.slice(4);
+
+export const examModes: Record<ExamModeId, ExamMode> = {
+  "portfolio-full": {
+    id: "portfolio-full",
+    subject: "portfolio",
+    labelDe: "Portfolio-Gesamtprüfung",
+    labelEn: "Full Portfolio exam",
+    descriptionDe: "Vollständige Portfolio-Simulation",
+    descriptionEn: "Complete Portfolio simulation",
+    durationMinutes: 90,
+    maxPoints: 90,
+    blocks: portfolioExamPlan,
+  },
+  "tax-german": {
+    id: "tax-german",
+    subject: "tax",
+    labelDe: "German Taxation",
+    labelEn: "German Taxation",
+    descriptionDe: "Teil I · zwei Drittel der Tax-Prüfung",
+    descriptionEn: "Part I · two thirds of the Tax exam",
+    durationMinutes: 60,
+    maxPoints: 60,
+    blocks: germanTaxExamPlan,
+  },
+  "tax-international": {
+    id: "tax-international",
+    subject: "tax",
+    labelDe: "International Taxation",
+    labelEn: "International Taxation",
+    descriptionDe: "Teil II · maximal 30 Minuten",
+    descriptionEn: "Part II · maximum 30 minutes",
+    durationMinutes: 30,
+    maxPoints: 30,
+    blocks: internationalTaxExamPlan,
+  },
+  "tax-combined": {
+    id: "tax-combined",
+    subject: "tax",
+    labelDe: "Tax-Gesamtprüfung",
+    labelEn: "Full Tax exam",
+    descriptionDe: "60 Min German + 30 Min International",
+    descriptionEn: "60 min German + 30 min International",
+    durationMinutes: 90,
+    maxPoints: 90,
+    blocks: taxExamPlan,
+  },
+};
+
+export function examModeForSession(subject: Subject, examModeId?: ExamModeId) {
+  return examModes[examModeId ?? (subject === "tax" ? "tax-combined" : "portfolio-full")];
+}

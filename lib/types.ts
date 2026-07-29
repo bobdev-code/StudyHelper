@@ -1,5 +1,7 @@
 export type Subject = "portfolio" | "tax";
 export type Language = "de" | "en";
+export type Difficulty = 1 | 2 | 3;
+export type ExamModeId = "portfolio-full" | "tax-german" | "tax-international" | "tax-combined";
 
 export type SourceRef = {
   document: string;
@@ -15,7 +17,7 @@ export type Flashcard = {
   front: string;
   back: string;
   helpDe?: string;
-  difficulty: 1 | 2 | 3;
+  difficulty: Difficulty;
   source: SourceRef;
 };
 
@@ -40,7 +42,7 @@ export type QuizQuestion = {
   helpDe?: string;
   solutionSteps?: string[];
   points: number;
-  difficulty: 1 | 2 | 3;
+  difficulty: Difficulty;
   source: SourceRef;
   diagnostic?: boolean;
 };
@@ -88,6 +90,7 @@ export type AnswerRecord = {
   errorType?: ErrorType;
   answeredAt: string;
   examSessionId?: string;
+  difficulty?: Difficulty;
 };
 
 export type LearningMode =
@@ -117,6 +120,7 @@ export type LearningAttempt = {
   hintsUsed: number;
   completedAt: string;
   examSessionId?: string;
+  difficulty?: Difficulty;
 };
 
 export type RepairTask = {
@@ -134,6 +138,8 @@ export type RepairTask = {
 export type ExamSession = {
   id: string;
   subject: Subject;
+  examModeId?: ExamModeId;
+  durationMinutes?: number;
   startedAt: string;
   completedAt?: string;
   questionIds: string[];
