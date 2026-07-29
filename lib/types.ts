@@ -121,6 +121,8 @@ export type LearningAttempt = {
   completedAt: string;
   examSessionId?: string;
   difficulty?: Difficulty;
+  writtenResponse?: string;
+  selfScore?: number;
 };
 
 export type RepairTask = {

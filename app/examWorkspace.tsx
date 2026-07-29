@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { examModeForSession, examModes, type ExamBlock } from "@/lib/data/exams";
 import { addLearningAttempt, upsertExam } from "@/lib/storage";
 import type { AppProgress, Confidence, ErrorType, ExamModeId, ExamSession, Language, Subject } from "@/lib/types";
+import { ExamAidPanel } from "./examAids";
 
 const tr = (language: Language, de: string, en: string) => language === "de" ? de : en;
 
@@ -245,6 +246,7 @@ export function ExamWorkspace({
       <div className="quiz-top"><span>{block.topic}</span><strong>{block.points} P · {block.targetMinutes} Min</strong></div>
       <h1>{block.title}</h1>
       <p className="exam-prompt">{block.prompt}</p>
+      <ExamAidPanel subject={activeMode.subject} language={language} />
 
       {block.responseType === "choice" ? <div className="options">{block.options?.map((option, optionIndex) => {
         const selected = session.answers[block.id] === optionIndex;
