@@ -35,6 +35,7 @@ function legacyAttempt(answer: AnswerRecord): LearningAttempt {
     hintsUsed: 0,
     completedAt: answer.answeredAt,
     examSessionId: answer.examSessionId,
+    difficulty: answer.difficulty,
   };
 }
 
@@ -58,7 +59,10 @@ export function topicMastery(progress: AppProgress): TopicMastery[] {
 
   return [...all.values()].map(({ subject, topic, attempts: topicAttempts }) => {
     const recent = topicAttempts.slice(-8);
-    const attemptWeight = (item: LearningAttempt, index: number) => (index + 1) * (item.difficulty ?? 2) / 2;
+    const attemptWeight = (item: LearningAttempt, index: number) => {
+      const modeWeight = item.mode === "flashcard" ? .65 : item.mode === "quiz" ? 1 : item.mode === "exam" ? 1.5 : 1.3;
+      return (index + 1) * (item.difficulty ?? 2) / 2 * modeWeight;
+    };
     const weightTotal = recent.reduce((sum, item, index) => sum + attemptWeight(item, index), 0) || 1;
     const accuracy = Math.round(recent.reduce((sum, item, index) => sum + (item.maxScore ? item.score / item.maxScore : 0) * attemptWeight(item, index), 0) / weightTotal * 100);
     const timed = recent.filter((item) => item.durationMs > 0);
@@ -124,7 +128,11 @@ export function adaptiveQueue(progress: AppProgress, minutes: number, subject: P
   const portfolio = ranked.filter((item) => item.subject === "portfolio");
   const tax = ranked.filter((item) => item.subject === "tax");
   const portfolioWeight = progress.settings.subjectWeights?.portfolio ?? 50;
-  let portfolioSlots = Math.round(size * portfolioWeight / 100);
+  const portfolioTarget = progress.settings.dailyTargets?.portfolio ?? 20;
+  const taxTarget = progress.settings.dailyTargets?.tax ?? 20;
+  const targetWeight = portfolioTarget / Math.max(1, portfolioTarget + taxTarget) * 100;
+  const effectivePortfolioWeight = (portfolioWeight + targetWeight) / 2;
+  let portfolioSlots = Math.round(size * effectivePortfolioWeight / 100);
   portfolioSlots = Math.max(1, Math.min(size - 1, portfolioSlots));
   const selected = [...portfolio.slice(0, portfolioSlots), ...tax.slice(0, size - portfolioSlots)];
   return selected.sort((a, b) => b.priority - a.priority);

@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { flashcards, learningVideos, modelOverviews, quizQuestions } from "@/lib/data";
 import {
@@ -30,9 +30,12 @@ import { taxCases, taxCaseErrorByStep, type TaxCase } from "@/lib/data/taxCaseLa
 import { getRememberMe, getSupabase, setRememberMe } from "@/lib/supabase";
 import { adaptiveQueue, scoreForecast, subjectCoverage, topicMastery, type PlanSubject } from "@/lib/adaptive";
 import { ExamWorkspace } from "./examWorkspace";
+import { ExamAidPanel } from "./examAids";
 
 type View = "dashboard" | "focus" | "mastery" | "plan" | "cards" | "quiz" | "trainer" | "errors" | "models" | "videos" | "exam";
 type SubjectScope = Subject | "all";
+type LearningTarget = { subject: Subject; topic: string };
+type Navigate = (view: View, target?: LearningTarget) => void;
 
 const subjectName: Record<Subject, string> = {
   portfolio: "Portfolio Management",
@@ -132,9 +135,17 @@ function EmptyState({ children }: { children: React.ReactNode }) {
   return <div className="empty-state">{children}</div>;
 }
 
+function ProfileIcon() {
+  return <svg className="profile-icon" viewBox="0 0 24 24" aria-hidden="true">
+    <circle cx="12" cy="8" r="3.5" />
+    <path d="M5.5 20c.45-4 2.65-6 6.5-6s6.05 2 6.5 6" />
+  </svg>;
+}
+
 export default function Home() {
   const [view, setView] = useState<View>("dashboard");
   const [subjectScope, setSubjectScope] = useState<SubjectScope>("all");
+  const [learningTarget, setLearningTarget] = useState<LearningTarget>();
   const [quizPreset, setQuizPreset] = useState<"tax-diagnostic">();
   const [progress, setProgress] = useState<AppProgress>(defaultProgress);
   const [ready, setReady] = useState(false);
@@ -238,11 +249,18 @@ export default function Home() {
     settings: { ...current.settings, language: next },
   }));
 
-  const navigate = (next: View) => {
+  const navigate: Navigate = (next, target) => {
+    setLearningTarget(target);
+    if (target) setSubjectScope(target.subject);
     setView(next);
     setMobileNav(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
+  const chooseSubject = (next: SubjectScope) => {
+    setLearningTarget(undefined);
+    setSubjectScope(next);
+  };
+  const showSubjectSwitcher = ["dashboard", "focus", "mastery", "plan"].includes(view);
 
   return (
     <LanguageContext.Provider value={language}><div className="app-shell">
@@ -276,19 +294,20 @@ export default function Home() {
         <header className="mobile-header">
           <button className="menu-button" onClick={() => setMobileNav((value) => !value)} aria-label="Menü öffnen">☰</button>
           <strong>{tr(language,"Lerntrainer 2026","StudyHelper 2026")}</strong>
-          <button className="mobile-account-button" onClick={() => setAuthOpen(true)} aria-label={tr(language,"Konto öffnen","Open account")}>{user ? "✓" : "♙"}</button>
+          <button className="mobile-account-button" onClick={() => setAuthOpen(true)} aria-label={tr(language,"Profil und Lernkonto öffnen","Open profile and learning account")}><ProfileIcon /><span className={`sync-dot ${cloudState}`} /></button>
         </header>
         <div className="top-actions">
-          <div className="subject-switcher" role="group" aria-label={tr(language,"Fachbereich wählen","Choose subject area")}>
-            <button className={subjectScope === "all" ? "active" : ""} onClick={() => setSubjectScope("all")}>{tr(language,"Übersicht","Overview")}</button>
-            <button className={subjectScope === "portfolio" ? "active" : ""} onClick={() => setSubjectScope("portfolio")}>Portfolio</button>
-            <button className={subjectScope === "tax" ? "active" : ""} onClick={() => setSubjectScope("tax")}>Taxation</button>
-          </div>
+          {showSubjectSwitcher && <div className="subject-switcher" role="group" aria-label={tr(language,"Fachbereich wählen","Choose subject area")}>
+            <button className={subjectScope === "all" ? "active" : ""} onClick={() => chooseSubject("all")}>{tr(language,"Übersicht","Overview")}</button>
+            <button className={subjectScope === "portfolio" ? "active" : ""} onClick={() => chooseSubject("portfolio")}>Portfolio</button>
+            <button className={subjectScope === "tax" ? "active" : ""} onClick={() => chooseSubject("tax")}>Taxation</button>
+          </div>}
           <div className="language-switch" role="group" aria-label={tr(language,"Sprache wählen","Choose language")}>
             <button className={language === "de" ? "active" : ""} onClick={() => setLanguage("de")} aria-pressed={language === "de"}><span className="flag-icon flag-de" aria-hidden="true" /> DE</button>
             <button className={language === "en" ? "active" : ""} onClick={() => setLanguage("en")} aria-pressed={language === "en"}><span className="flag-icon flag-gb" aria-hidden="true" /> EN</button>
           </div>
           <button className="account-button" onClick={() => setAuthOpen(true)}>
+            <ProfileIcon />
             <span className={`sync-dot ${cloudState}`} />
             {user ? (user.user_metadata?.display_name || user.email) : tr(language,"Anmelden","Sign in")}
           </button>
@@ -297,8 +316,8 @@ export default function Home() {
         {view === "focus" && <AdaptiveSession progress={progress} setProgress={setProgress} navigate={navigate} />}
         {view === "mastery" && <MasteryMatrix progress={progress} navigate={navigate} />}
         {view === "plan" && <DailyPlan progress={progress} navigate={navigate} />}
-        {view === "cards" && <Cards key={subjectScope} progress={progress} setProgress={setProgress} initialSubject={subjectScope} />}
-        {view === "quiz" && <Quiz key={`${subjectScope}-${quizPreset ?? "regular"}`} setProgress={setProgress} preset={quizPreset} initialSubject={subjectScope} onPresetApplied={() => setQuizPreset(undefined)} />}
+        {view === "cards" && <Cards key={`${subjectScope}-${learningTarget?.topic ?? "all"}`} progress={progress} setProgress={setProgress} initialSubject={subjectScope} initialTopic={learningTarget?.topic} />}
+        {view === "quiz" && <Quiz key={`${subjectScope}-${learningTarget?.topic ?? "all"}-${quizPreset ?? "regular"}`} setProgress={setProgress} preset={quizPreset} initialSubject={subjectScope} initialTopic={learningTarget?.topic} onPresetApplied={() => setQuizPreset(undefined)} />}
         {view === "trainer" && <SubjectTrainer progress={progress} setProgress={setProgress} onStartTaxDiagnostic={() => { setQuizPreset("tax-diagnostic"); navigate("quiz"); }} />}
         {view === "errors" && <ErrorBook progress={progress} navigate={navigate} />}
         {view === "models" && <Models />}
@@ -378,7 +397,7 @@ function AuthDialog({ user, language, onClose }: { user: User | null; language: 
   </div>;
 }
 
-function Dashboard({ progress, navigate, subjectScope }: { progress: AppProgress; navigate: (view: View) => void; subjectScope: SubjectScope }) {
+function Dashboard({ progress, navigate, subjectScope }: { progress: AppProgress; navigate: Navigate; subjectScope: SubjectScope }) {
   const language = useLanguage();
   const [daypart, setDaypart] = useState<"morning" | "day" | "evening">("day");
   useEffect(() => {
@@ -393,14 +412,6 @@ function Dashboard({ progress, navigate, subjectScope }: { progress: AppProgress
     : daypart === "evening"
       ? tr(language, "Guten Abend, Admin", "Good evening, Admin")
       : tr(language, "Guten Tag, Admin", "Good afternoon, Admin");
-  const metrics = useMemo(() => {
-    const result = { portfolio: { correct: 0, total: 0 }, tax: { correct: 0, total: 0 } };
-    progress.answers.forEach((answer) => {
-      result[answer.subject].total += 1;
-      if (answer.correct) result[answer.subject].correct += 1;
-    });
-    return result;
-  }, [progress.answers]);
   const portfolioForecast = scoreForecast(progress, "portfolio");
   const taxForecast = scoreForecast(progress, "tax");
   const pScore = portfolioForecast.central;
@@ -412,6 +423,18 @@ function Dashboard({ progress, navigate, subjectScope }: { progress: AppProgress
     progress.answers.filter((answer) => answer.correct).length,
     progress.answers.length,
   );
+  const masteryRows = topicMastery(progress);
+  const subjectLearning = (subject: Subject) => {
+    const rows = masteryRows.filter((item) => item.subject === subject);
+    const attempts = (progress.attempts ?? []).filter((item) => item.subject === subject);
+    return {
+      mastery: rows.length ? Math.round(rows.reduce((sum, item) => sum + item.mastery, 0) / rows.length) : 0,
+      mcqs: attempts.filter((item) => item.mode === "quiz").length,
+      applications: attempts.filter((item) => !["quiz", "flashcard"].includes(item.mode)).length,
+    };
+  };
+  const portfolioLearning = subjectLearning("portfolio");
+  const taxLearning = subjectLearning("tax");
 
   return (
     <section className="page dashboard-page">
@@ -421,8 +444,8 @@ function Dashboard({ progress, navigate, subjectScope }: { progress: AppProgress
       </div>
 
       <div className="subject-grid">
-        {subjectScope !== "tax" ? <SubjectCard subject="portfolio" score={pScore} accuracy={metrics.portfolio.total ? pct(metrics.portfolio.correct, metrics.portfolio.total) : 32} priority /> : null}
-        {subjectScope !== "portfolio" ? <SubjectCard subject="tax" score={tScore} accuracy={metrics.tax.total ? pct(metrics.tax.correct, metrics.tax.total) : 56} /> : null}
+        {subjectScope !== "tax" ? <SubjectCard subject="portfolio" score={pScore} mastery={portfolioLearning.mastery} mcqs={portfolioLearning.mcqs} applications={portfolioLearning.applications} priority /> : null}
+        {subjectScope !== "portfolio" ? <SubjectCard subject="tax" score={tScore} mastery={taxLearning.mastery} mcqs={taxLearning.mcqs} applications={taxLearning.applications} /> : null}
       </div>
 
       <div className="dashboard-lower">
@@ -456,7 +479,7 @@ function Dashboard({ progress, navigate, subjectScope }: { progress: AppProgress
   );
 }
 
-function AdaptiveSession({ progress, setProgress, navigate }: { progress: AppProgress; setProgress: React.Dispatch<React.SetStateAction<AppProgress>>; navigate: (view: View) => void }) {
+function AdaptiveSession({ progress, setProgress, navigate }: { progress: AppProgress; setProgress: React.Dispatch<React.SetStateAction<AppProgress>>; navigate: Navigate }) {
   const language = useLanguage();
   const [minutes, setMinutes] = useState(progress.settings.dailyMinutes || 30);
   const [subject, setSubject] = useState<PlanSubject>("all");
@@ -473,9 +496,10 @@ function AdaptiveSession({ progress, setProgress, navigate }: { progress: AppPro
   };
   const portfolioSummary = summary("portfolio");
   const taxSummary = summary("tax");
-  const targetView = (subject: Subject, attempts: number): View => attempts === 0 ? "cards" : subject === "portfolio" ? "trainer" : "quiz";
+  const targetView = (attempts: number): View => attempts === 0 ? "cards" : "quiz";
+  const startItem = (item: (typeof queue)[number]) => navigate(targetView(item.attempts), { subject: item.subject, topic: item.topic });
   return <section className="page"><PageHeading eyebrow={tr(language,"ADAPTIVE LERNSTEUERUNG","ADAPTIVE LEARNING")} title={tr(language,"Jetzt optimal lernen","Your optimal session")} description={tr(language,"Die Reihenfolge kombiniert fällige Wiederholungen, Scheinsicherheiten, schwache punktestarke Themen und noch nicht abgedeckten Stoff.","The sequence combines due reviews, false confidence, weak high-value topics and content you have not covered yet.")} />
-    <div className="session-length" role="group" aria-label={tr(language,"Dauer wählen","Choose duration")}>{[5,15,30,60,90].map(value=><button key={value} className={minutes===value?"active":""} onClick={()=>setMinutes(value)}>{value} {tr(language,"Min","min")}</button>)}</div>
+    <div className="session-length" role="group" aria-label={tr(language,"Dauer wählen","Choose duration")}>{[5,15,30,60,90].map(value=><button key={value} className={minutes===value?"active":""} onClick={()=>{setMinutes(value);setProgress(current=>({...current,settings:{...current.settings,dailyMinutes:value}}));}}>{value} {tr(language,"Min","min")}</button>)}</div>
     <div className="subject-plan-tabs" role="group" aria-label={tr(language,"Fachplan wählen","Choose subject plan")}>
       {(["all","portfolio","tax"] as PlanSubject[]).map((value)=><button key={value} className={subject===value?"active":""} onClick={()=>setSubject(value)}>{value==="all"?tr(language,"Gesamtplan","Combined plan"):value==="portfolio"?"Portfolio Management":"Taxation"}</button>)}
     </div>
@@ -489,8 +513,8 @@ function AdaptiveSession({ progress, setProgress, navigate }: { progress: AppPro
       <div><b>{tr(language,"Tagesziele je Fach","Daily targets by subject")}</b><small>{tr(language,"Minuten, die du heute mindestens je Fach reservieren möchtest.","Minutes you want to reserve for each subject today.")}</small></div>
       <div className="daily-targets">{(["portfolio","tax"] as Subject[]).map((value)=><label key={value}><span>{value==="portfolio"?"Portfolio":"Taxation"}</span><input type="number" min="5" max="90" step="5" value={progress.settings.dailyTargets?.[value]??20} onChange={(event)=>setProgress(current=>({...current,settings:{...current.settings,dailyTargets:{portfolio:current.settings.dailyTargets?.portfolio??20,tax:current.settings.dailyTargets?.tax??20,[value]:Number(event.target.value)}}}))}/><b>{tr(language,"Min","min")}</b></label>)}</div>
     </article>
-    <div className="adaptive-layout"><div className="adaptive-queue">{queue.map((item,index)=><article key={`${item.subject}-${item.topic}`} className="adaptive-item"><span>{String(index+1).padStart(2,"0")}</span><div><small>{subjectName[item.subject]} · {item.status}</small><h3>{item.topic}</h3><p>{item.reason} · Mastery {item.mastery}% · {item.attempts} {tr(language,"Versuche an","attempts across")} {item.days} {tr(language,"Lerntag(en)","study day(s)")}</p></div><button onClick={()=>navigate(targetView(item.subject,item.attempts))}>{tr(language,"Starten","Start")} →</button></article>)}</div>
-      <aside className="panel session-summary"><strong>{minutes}</strong><span>{tr(language,"Minuten Fokus","focus minutes")}</span><p>{queue.filter(item=>item.nextDueAt<=new Date().toISOString()).length} {tr(language,"fällige Themen","due topics")}, {queue.filter(item=>item.attempts===0).length} {tr(language,"Abdeckungslücken","coverage gaps")}.</p><div className="why-card"><b>{tr(language,"Warum Priorität 1?","Why priority 1?")}</b><p>{queue[0] ? tr(language, queue[0].reason, queue[0].reasonKey==="false-confidence"?"Correct false confidence":queue[0].reasonKey==="due"?"Review is due":queue[0].reasonKey==="coverage"?"Extend content coverage":"Close a high-value gap") : "–"}</p></div><button className="primary-button" onClick={()=>queue[0]&&navigate(targetView(queue[0].subject,queue[0].attempts))}>{tr(language,"Mit Priorität 1 beginnen","Start with priority 1")} →</button><button className="secondary-button check-button" onClick={()=>navigate(queue[0]?.subject==="portfolio"?"trainer":"quiz")}>{tr(language,"Erfolgskontrolle mit neuer Variante","Check retention with a new variant")} →</button></aside></div>
+    <div className="adaptive-layout"><div className="adaptive-queue">{queue.map((item,index)=><article key={`${item.subject}-${item.topic}`} className="adaptive-item"><span>{String(index+1).padStart(2,"0")}</span><div><small>{subjectName[item.subject]} · {item.status}</small><h3>{item.topic}</h3><p>{item.reason} · Mastery {item.mastery}% · {item.attempts} {tr(language,"Versuche an","attempts across")} {item.days} {tr(language,"Lerntag(en)","study day(s)")}</p></div><button onClick={()=>startItem(item)}>{tr(language,"Passend starten","Start selected topic")} →</button></article>)}</div>
+      <aside className="panel session-summary"><strong>{minutes}</strong><span>{tr(language,"Minuten Fokus","focus minutes")}</span><p>{queue.filter(item=>item.nextDueAt<=new Date().toISOString()).length} {tr(language,"fällige Themen","due topics")}, {queue.filter(item=>item.attempts===0).length} {tr(language,"Abdeckungslücken","coverage gaps")}.</p><div className="why-card"><b>{tr(language,"Warum Priorität 1?","Why priority 1?")}</b><p>{queue[0] ? tr(language, queue[0].reason, queue[0].reasonKey==="false-confidence"?"Correct false confidence":queue[0].reasonKey==="due"?"Review is due":queue[0].reasonKey==="coverage"?"Extend content coverage":"Close a high-value gap") : "–"}</p></div><button className="primary-button" onClick={()=>queue[0]&&startItem(queue[0])}>{tr(language,"Mit Priorität 1 beginnen","Start with priority 1")} →</button><button className="secondary-button check-button" onClick={()=>queue[0]&&navigate("quiz",{subject:queue[0].subject,topic:queue[0].topic})}>{tr(language,"Erfolgskontrolle mit neuer Variante","Check retention with a new variant")} →</button></aside></div>
     <CoverageAndCountdown progress={progress} />
   </section>;
 }
@@ -504,31 +528,31 @@ function CoverageAndCountdown({ progress }: { progress: AppProgress }) {
   return <div className="coverage-section"><div className="coverage-heading"><div><span className="question-type">{tr(language,"STOFFABDECKUNG","CONTENT COVERAGE")}</span><h2>{tr(language,"Vom ersten Kontakt bis klausursicher","From first contact to exam-ready")}</h2></div><p><b>{remainingDays} {tr(language,"Tage","days")}</b> · {tr(language,`ca. ${dailyNew} neue Themen pro Tag`,`about ${dailyNew} new topics per day`)}</p></div><div className="coverage-grid">{rows.map(({subject,coverage})=><article key={subject}><h3>{subjectName[subject]}</h3>{([['learned','Gelernt','Learned'],['practised','Geübt','Practised'],['transferred','Transferiert','Transferred'],['examReady','Klausursicher','Exam-ready']] as const).map(([key,de,en])=><div className="coverage-row" key={key}><span>{tr(language,de,en)}</span><i><b style={{width:`${coverage.percent(coverage[key])}%`}}/></i><strong>{coverage[key]}/{coverage.total}</strong></div>)}</article>)}</div><p className="dynamic-plan-note">{tr(language,"Der Plan wird nach jedem Versuch neu berechnet. Fällige Fehler kommen zuerst; danach schließt du gleichmäßig Abdeckungslücken bis zum 04.08.","The plan recalculates after every attempt. Due errors come first, then coverage gaps are closed steadily until 4 August.")}</p></div>;
 }
 
-function MasteryMatrix({ progress, navigate }: { progress: AppProgress; navigate: (view: View) => void }) {
+function MasteryMatrix({ progress, navigate }: { progress: AppProgress; navigate: Navigate }) {
   const language = useLanguage();
   const rows = topicMastery(progress);
   return <section className="page"><PageHeading eyebrow={tr(language,"MEHR ALS RICHTIG / FALSCH","MORE THAN RIGHT / WRONG")} title={tr(language,"Kompetenzmatrix","Mastery matrix")} description={tr(language,"Beherrscht bedeutet: wiederholt korrekt, an mehreren Tagen, angemessen schnell und mit realistischer Sicherheit.","Mastered means: repeatedly correct, across multiple days, at an appropriate speed and with calibrated confidence.")} />
     <div className="mastery-legend"><span className="status-dot weak" /> {tr(language,"Lücke","gap")} <span className="status-dot unsure" /> {tr(language,"im Aufbau","developing")} <span className="status-dot safe" /> {tr(language,"fast sicher / beherrscht","nearly secure / mastered")}</div>
-    <div className="mastery-table"><div className="mastery-head"><span>{tr(language,"Kompetenz","Skill")}</span><span>{tr(language,"Treffer","Accuracy")}</span><span>{tr(language,"Tempo","Speed")}</span><span>{tr(language,"Kalibrierung","Calibration")}</span><span>Mastery</span><span>{tr(language,"Status","Status")}</span></div>{rows.map(item=><button key={`${item.subject}-${item.topic}`} onClick={()=>navigate(item.subject==="portfolio"?"trainer":"quiz")}><span><small>{item.subject==="portfolio"?"Portfolio":"Taxation"}</small><b>{item.topic}</b></span><span>{item.attempts?`${item.accuracy}%`:"–"}</span><span>{item.attempts?`${item.speed}%`:"–"}</span><span>{item.attempts?`${item.confidenceCalibration}%`:"–"}</span><span><i style={{width:`${item.mastery}%`}} />{item.mastery}%</span><span className={`mastery-status ${item.status.replaceAll(" ","-")}`}>{item.status}</span></button>)}</div>
+    <div className="mastery-table"><div className="mastery-head"><span>{tr(language,"Kompetenz","Skill")}</span><span>{tr(language,"Treffer","Accuracy")}</span><span>{tr(language,"Tempo","Speed")}</span><span>{tr(language,"Kalibrierung","Calibration")}</span><span>Mastery</span><span>{tr(language,"Status","Status")}</span></div>{rows.map(item=><button key={`${item.subject}-${item.topic}`} onClick={()=>navigate(item.attempts ? "quiz" : "cards",{subject:item.subject,topic:item.topic})}><span><small>{item.subject==="portfolio"?"Portfolio":"Taxation"}</small><b>{item.topic}</b></span><span>{item.attempts?`${item.accuracy}%`:"–"}</span><span>{item.attempts?`${item.speed}%`:"–"}</span><span>{item.attempts?`${item.confidenceCalibration}%`:"–"}</span><span><i style={{width:`${item.mastery}%`}} />{item.mastery}%</span><span className={`mastery-status ${item.status.replaceAll(" ","-")}`}>{item.status}</span></button>)}</div>
   </section>;
 }
 
-function SubjectCard({ subject, score, accuracy, priority = false }: { subject: Subject; score: number; accuracy: number; priority?: boolean }) {
+function SubjectCard({ subject, score, mastery, mcqs, applications, priority = false }: { subject: Subject; score: number; mastery: number; mcqs: number; applications: number; priority?: boolean }) {
   const language = useLanguage();
   return (
     <article className={`subject-card ${subject} ${priority ? "priority" : ""}`}>
       <div className="subject-card-head"><span className="subject-icon">{subject === "portfolio" ? "◎" : "§"}</span><div><p>{priority ? tr(language,"PRIORITÄT HOCH","HIGH PRIORITY") : tr(language,"STABILISIEREN","STABILISE")}</p><h2>{subjectName[subject]}</h2></div></div>
-      <div className="score-row"><strong>{score}</strong><span>/ 90 {tr(language,"Punkte","points")}</span><b>{accuracy}%</b></div>
+      <div className="score-row"><strong>{score}</strong><span>/ 90 {tr(language,"Punkte","points")}</span><b>{mastery}%</b></div>
       <div className="progress-track"><span style={{ width: `${Math.min(100, (score / 90) * 100)}%` }} /></div>
-      <p className="subject-note">{subject === "portfolio" ? tr(language,"Intensivpfad · Formeln, Rechenroutine, Interpretation","Intensive track · formulas, calculations, interpretation") : tr(language,"Punkte sichern · Norm, Tatbestand, Rechtsfolge","Secure points · rule, requirements, legal consequence")}</p>
+      <p className="subject-note">{tr(language,`Gemeinsamer Lernstand: Karteikarten, ${mcqs} MCQ-Versuche und ${applications} Anwendungen.`,`Combined mastery: flashcards, ${mcqs} MCQ attempts and ${applications} applications.`)}</p>
     </article>
   );
 }
 
-function Cards({ progress, setProgress, initialSubject }: { progress: AppProgress; setProgress: React.Dispatch<React.SetStateAction<AppProgress>>; initialSubject: SubjectScope }) {
+function Cards({ progress, setProgress, initialSubject, initialTopic }: { progress: AppProgress; setProgress: React.Dispatch<React.SetStateAction<AppProgress>>; initialSubject: SubjectScope; initialTopic?: string }) {
   const language = useLanguage();
   const [subject, setSubject] = useState<Subject | "all">(initialSubject);
-  const [topic, setTopic] = useState("all");
+  const [topic, setTopic] = useState(initialTopic ?? "all");
   const [query, setQuery] = useState("");
   const [favorites, setFavorites] = useState(false);
   const [index, setIndex] = useState(0);
@@ -562,6 +586,7 @@ function Cards({ progress, setProgress, initialSubject }: { progress: AppProgres
         errorTypes: result === "wrong" ? ["Wissenslücke"] : [],
         hintsUsed: 0,
         completedAt,
+        difficulty: card.difficulty,
       },
     ));
     setFlipped(false);
@@ -578,6 +603,7 @@ function Cards({ progress, setProgress, initialSubject }: { progress: AppProgres
   return (
     <section className="page">
       <PageHeading eyebrow="SPACED REPETITION" title={tr(language,"Karteikarten","Flashcards")} description={tr(language,`${flashcards.filter((item) => item.subject === "portfolio").length} Portfolio- und ${flashcards.filter((item) => item.subject === "tax").length} Taxation-Karten mit Quellenreferenz.`,`${flashcards.filter((item) => item.subject === "portfolio").length} portfolio and ${flashcards.filter((item) => item.subject === "tax").length} taxation cards with source references.`)} />
+      {initialTopic && <div className="active-learning-target"><span>◎</span><div><small>{tr(language,"AUS „OPTIMAL LERNEN“ VORAUSGEWÄHLT","PRESELECTED FROM OPTIMAL SESSION")}</small><strong>{initialSubject === "portfolio" ? "Portfolio Management" : "Taxation"} · {initialTopic}</strong></div></div>}
       <div className="toolbar">
         <select value={subject} onChange={(event) => { setSubject(event.target.value as Subject | "all"); setTopic("all"); setIndex(0); setFlipped(false); }}><option value="portfolio">Portfolio Management</option><option value="tax">Taxation</option><option value="all">{tr(language,"Beide Fächer","Both subjects")}</option></select>
         <select value={topic} onChange={(event) => { setTopic(event.target.value); setIndex(0); setFlipped(false); }}><option value="all">{tr(language,"Alle Themen","All topics")}</option>{topics.map((item) => <option key={item}>{item}</option>)}</select>
@@ -603,9 +629,10 @@ function Cards({ progress, setProgress, initialSubject }: { progress: AppProgres
   );
 }
 
-function Quiz({ setProgress, preset, initialSubject, onPresetApplied }: { setProgress: React.Dispatch<React.SetStateAction<AppProgress>>; preset?: "tax-diagnostic"; initialSubject: SubjectScope; onPresetApplied: () => void }) {
+function Quiz({ setProgress, preset, initialSubject, initialTopic, onPresetApplied }: { setProgress: React.Dispatch<React.SetStateAction<AppProgress>>; preset?: "tax-diagnostic"; initialSubject: SubjectScope; initialTopic?: string; onPresetApplied: () => void }) {
   const language = useLanguage();
   const [subject, setSubject] = useState<Subject | "all">(preset === "tax-diagnostic" ? "tax" : initialSubject);
+  const [topic, setTopic] = useState(initialTopic ?? "all");
   const [diagnostic, setDiagnostic] = useState(preset === "tax-diagnostic");
   const [difficulty, setDifficulty] = useState<Difficulty | "all">("all");
   const [session, setSession] = useState<QuizQuestion[]>([]);
@@ -618,14 +645,17 @@ function Quiz({ setProgress, preset, initialSubject, onPresetApplied }: { setPro
   const [errorType, setErrorType] = useState<ErrorType>("Wissenslücke");
   const started = useRef(0);
   const question = session[index];
+  const availableQuestions = quizQuestions.filter((item) =>
+    (subject === "all" || item.subject === subject)
+    && (topic === "all" || item.topic === topic)
+    && (!diagnostic || item.diagnostic)
+    && (diagnostic || difficulty === "all" || item.difficulty === difficulty)
+  );
 
   const start = () => {
     onPresetApplied();
-    const pool = quizQuestions.filter((item) =>
-      (subject === "all" || item.subject === subject)
-      && (!diagnostic || item.diagnostic)
-      && (diagnostic || difficulty === "all" || item.difficulty === difficulty)
-    );
+    const pool = availableQuestions;
+    if (!pool.length) return;
     const broad = [...new Map(shuffle(pool).map((item) => [`${item.subject}-${item.topic}`, item])).values()];
     const target = diagnostic ? (subject === "all" ? 18 : 12) : 12;
     setSession([...broad, ...shuffle(pool.filter((item) => !broad.includes(item)))].slice(0, target).map(shuffleQuestionOptions));
@@ -681,7 +711,9 @@ function Quiz({ setProgress, preset, initialSubject, onPresetApplied }: { setPro
 
   if (!question) return (
     <section className="page"><PageHeading eyebrow={tr(language,"AKTIVES ABRUFEN","ACTIVE RECALL")} title="Quiz" description={tr(language,"Prüfungsfragen mit deutscher Verständnishilfe, sofortigem Feedback und persönlichem Fehlerprotokoll.","Exam questions with immediate feedback and a personal error log.")} />
-      <div className="setup-grid three"><article className={`setup-card ${subject === "portfolio" ? "selected" : ""}`} onClick={() => setSubject("portfolio")}><span>◎</span><h2>Portfolio Management</h2><p>{quizQuestions.filter((item) => item.subject === "portfolio").length} geprüfte Fragen</p></article><article className={`setup-card ${subject === "tax" ? "selected tax" : ""}`} onClick={() => setSubject("tax")}><span>§</span><h2>Taxation</h2><p>{quizQuestions.filter((item) => item.subject === "tax").length} geprüfte Fragen</p></article><article className={`setup-card ${subject === "all" ? "selected combined" : ""}`} onClick={() => { setSubject("all"); setDiagnostic(true); }}><span>◫</span><h2>Gesamtdiagnose</h2><p>18 Fragen aus beiden Fächern</p></article></div>
+      {initialTopic && <div className="active-learning-target"><span>◎</span><div><small>{tr(language,"AUS „OPTIMAL LERNEN“ VORAUSGEWÄHLT","PRESELECTED FROM OPTIMAL SESSION")}</small><strong>{subject === "portfolio" ? "Portfolio Management" : "Taxation"} · {initialTopic}</strong></div></div>}
+      <div className="setup-grid three"><article className={`setup-card ${subject === "portfolio" ? "selected" : ""}`} onClick={() => { setSubject("portfolio"); setTopic("all"); }}><span>◎</span><h2>Portfolio Management</h2><p>{quizQuestions.filter((item) => item.subject === "portfolio").length} geprüfte Fragen</p></article><article className={`setup-card ${subject === "tax" ? "selected tax" : ""}`} onClick={() => { setSubject("tax"); setTopic("all"); }}><span>§</span><h2>Taxation</h2><p>{quizQuestions.filter((item) => item.subject === "tax").length} geprüfte Fragen</p></article><article className={`setup-card ${subject === "all" ? "selected combined" : ""}`} onClick={() => { setSubject("all"); setTopic("all"); setDiagnostic(true); }}><span>◫</span><h2>Gesamtdiagnose</h2><p>18 Fragen aus beiden Fächern</p></article></div>
+      <label className="quiz-topic-filter"><span>{tr(language,"Thema für diese Session","Topic for this session")}</span><select value={topic} onChange={(event) => setTopic(event.target.value)}><option value="all">{tr(language,"Alle Themen des Fachs","All subject topics")}</option>{[...new Set(quizQuestions.filter((item) => subject === "all" || item.subject === subject).map((item) => item.topic))].map((item) => <option key={item} value={item}>{item}</option>)}</select><small>{topic === "all" ? tr(language,"Die Session wird breit über das Fach gestreut.","The session will span the subject.") : tr(language,`Alle Fragen stammen aus „${topic}“.`,`Every question will focus on “${topic}”.`)}</small></label>
       <div className="difficulty-panel panel">
         <div><span className="question-type">{tr(language,"SCHWIERIGKEIT","DIFFICULTY")}</span><h2>{tr(language,"An deinem Lernstand trainieren","Train at your current level")}</h2><p>{tr(language,"Basis prüft Begriffe und Formeln, Anwendung verlangt die richtige Methode, Transfer kombiniert mehrere Schritte und typische Fallen.","Foundation tests concepts and formulas, Application requires the correct method, and Transfer combines several steps and common traps.")}</p></div>
         <div className="difficulty-buttons">
@@ -691,12 +723,12 @@ function Quiz({ setProgress, preset, initialSubject, onPresetApplied }: { setPro
             [2, tr(language,"Anwendung","Application"), tr(language,"Methode wählen","choose the method")],
             [3, "Transfer", tr(language,"mehrstufig & neu","multi-step & novel")],
           ] as const).map(([level, label, note]) => {
-            const count = quizQuestions.filter((item) => (subject === "all" || item.subject === subject) && (level === "all" || item.difficulty === level)).length;
+            const count = quizQuestions.filter((item) => (subject === "all" || item.subject === subject) && (topic === "all" || item.topic === topic) && (level === "all" || item.difficulty === level)).length;
             return <button key={level} disabled={diagnostic} className={difficulty === level ? "active" : ""} onClick={() => setDifficulty(level)}><strong>{label}</strong><small>{note} · {count}</small></button>;
           })}
         </div>
       </div>
-      <div className="quiz-start panel"><label className="switch-row"><input type="checkbox" checked={diagnostic} onChange={(event) => setDiagnostic(event.target.checked)} /><span><strong>{tr(language,"Adaptiver Diagnosetest","Adaptive diagnostic")}</strong><small>{tr(language,`${subject === "all" ? "18" : "12"} breit gestreute Fragen über alle Level mit Sicherheitsabgleich`,`${subject === "all" ? "18" : "12"} broadly distributed questions across all levels with confidence calibration`)}</small></span></label><button className="primary-button" onClick={start}>{diagnostic ? tr(language,"Diagnosetest starten","Start diagnostic") : tr(language,"12 Fragen starten","Start 12 questions")} →</button></div>
+      <div className="quiz-start panel"><label className="switch-row"><input type="checkbox" checked={diagnostic} onChange={(event) => setDiagnostic(event.target.checked)} /><span><strong>{tr(language,"Adaptiver Diagnosetest","Adaptive diagnostic")}</strong><small>{availableQuestions.length ? tr(language,`${Math.min(subject === "all" ? 18 : 12, availableQuestions.length)} passende Fragen mit Sicherheitsabgleich`,`${Math.min(subject === "all" ? 18 : 12, availableQuestions.length)} matching questions with confidence calibration`) : tr(language,"Für diese Kombination gibt es keine Diagnosefrage. Deaktiviere Diagnose oder wähle „Alle Themen“.","No diagnostic question matches this selection. Disable diagnostic or choose “All topics”.")}</small></span></label><button className="primary-button" disabled={!availableQuestions.length} onClick={start}>{diagnostic ? tr(language,"Diagnosetest starten","Start diagnostic") : tr(language,`${Math.min(12, availableQuestions.length)} Fragen starten`,`Start ${Math.min(12, availableQuestions.length)} questions`)} →</button></div>
     </section>
   );
 
@@ -760,7 +792,7 @@ function SubjectTrainer({ progress, setProgress, onStartTaxDiagnostic }: { progr
   if (mode === "academy") return <PortfolioAcademy progress={progress} setProgress={setProgress} onExit={() => setMode(undefined)} />;
   if (mode === "tax-prep") return <TaxExamPreparation onExit={() => setMode(undefined)} onStartDiagnostic={onStartTaxDiagnostic} />;
 
-  if (mode === "lab" && labTasks[labIndex]) return <CalculationLab task={labTasks[labIndex]} position={labIndex} total={labTasks.length} confidence={confidence} setConfidence={setConfidence} onExit={() => setMode(undefined)} onComplete={(errors) => {
+  if (mode === "lab" && labTasks[labIndex]) return <CalculationLab key={labTasks[labIndex].id} task={labTasks[labIndex]} position={labIndex} total={labTasks.length} confidence={confidence} setConfidence={setConfidence} onExit={() => setMode(undefined)} onComplete={(errors) => {
     const task = labTasks[labIndex]; const correct = errors.length === 0;
     const record: AnswerRecord = { id: uid("lab"), questionId: `lab-${task.id}-${Date.now()}`, subject: "portfolio", topic: task.topic, correct, durationMs: Date.now() - labStarted.current, confidence, errorType: correct ? undefined : labErrorByStage[errors[0]], answeredAt: new Date().toISOString() };
     setProgress((current) => addLearningAttempt(addAnswer(current, record), {
@@ -773,15 +805,21 @@ function SubjectTrainer({ progress, setProgress, onStartTaxDiagnostic }: { progr
     setLabIndex((value) => value + 1); setConfidence("medium"); labStarted.current = Date.now();
   }} />;
 
-  if (mode === "tax-lab" && taxLabCases[taxLabIndex]) return <TaxCaseLab taxCase={taxLabCases[taxLabIndex]} position={taxLabIndex} total={taxLabCases.length} confidence={confidence} setConfidence={setConfidence} onExit={() => setMode(undefined)} onComplete={(score, firstError) => {
-    const item = taxLabCases[taxLabIndex]; const correct = score === item.steps.reduce((sum, step) => sum + step.points, 0);
-    const record: AnswerRecord = { id: uid("tax-lab"), questionId: `tax-lab-${item.id}-${Date.now()}`, subject: "tax", topic: item.topic, correct, durationMs: Date.now() - labStarted.current, confidence, errorType: firstError ? taxCaseErrorByStep[firstError] : undefined, answeredAt: new Date().toISOString() };
-    const maxScore = item.steps.reduce((sum, step) => sum + step.points, 0);
+  if (mode === "tax-lab" && taxLabCases[taxLabIndex]) return <TaxCaseLab key={taxLabCases[taxLabIndex].id} taxCase={taxLabCases[taxLabIndex]} position={taxLabIndex} total={taxLabCases.length} confidence={confidence} setConfidence={setConfidence} onExit={() => setMode(undefined)} onComplete={({ score, firstError, writtenResponse, selfScore }) => {
+    const item = taxLabCases[taxLabIndex];
+    const stepMaxScore = item.steps.reduce((sum, step) => sum + step.points, 0);
+    const maxScore = stepMaxScore + 2;
+    const totalScore = score + selfScore;
+    const writingError: ErrorType | undefined = selfScore < 2 ? "Interpretation fehlt" : undefined;
+    const errorType = firstError ? taxCaseErrorByStep[firstError] : writingError;
+    const correct = totalScore === maxScore;
+    const record: AnswerRecord = { id: uid("tax-lab"), questionId: `tax-lab-${item.id}-${Date.now()}`, subject: "tax", topic: item.topic, correct, durationMs: Date.now() - labStarted.current, confidence, errorType, answeredAt: new Date().toISOString() };
     setProgress((current) => addLearningAttempt(addAnswer(current, record), {
       id: `answer-${record.id}`, activityId: item.id, variantId: record.questionId,
       subject: "tax", topic: item.topic, mode: "tax-case", stage: "transfer",
-      score, maxScore, durationMs: record.durationMs, confidence,
+      score: totalScore, maxScore, durationMs: record.durationMs, confidence,
       errorTypes: record.errorType ? [record.errorType] : [], hintsUsed: 0, completedAt: record.answeredAt,
+      writtenResponse, selfScore,
     }));
     setTaxLabCases((current) => correct ? current : [...current, item]);
     setTaxLabIndex((value) => value + 1); setConfidence("medium"); labStarted.current = Date.now();
@@ -898,6 +936,7 @@ function TaxExamPreparation({ onExit, onStartDiagnostic }: { onExit: () => void;
       <nav className="tax-prep-nav" aria-label={de ? "Kapitel" : "Chapters"}>{chapters.map((entry,index)=><button key={entry.title} className={index===chapter?"active":index<chapter?"visited":""} onClick={()=>setChapter(index)}><span>{index<chapter?"✓":index+1}</span><div><small>{entry.kicker}</small><strong>{entry.title}</strong></div></button>)}</nav>
       <article className="tax-prep-lesson">
         <span className="question-type">{item.kicker}</span><h1>{item.title}</h1><p className="tax-prep-summary">{item.summary}</p>
+        <ExamAidPanel subject="tax" language={language} />
         <div className="tax-prep-schema"><h2>{de ? "Prüfungsschema" : "Exam sequence"}</h2><ol>{item.steps.map(step=><li key={step}>{step}</li>)}</ol></div>
         <div className="tax-prep-example"><span>∑</span><div><h3>{de ? "Vorgerechnetes Beispiel" : "Worked example"}</h3><p>{item.example}</p></div></div>
         <aside className="tax-prep-trap"><b>{de ? "Typischer Punktverlust" : "Typical lost marks"}</b><p>{item.trap}</p></aside>
@@ -912,14 +951,17 @@ function TaxExamPreparation({ onExit, onStartDiagnostic }: { onExit: () => void;
 function TaxCaseLab({ taxCase, position, total, confidence, setConfidence, onExit, onComplete }: {
   taxCase: TaxCase; position: number; total: number; confidence: Confidence;
   setConfidence: (value: Confidence) => void; onExit: () => void;
-  onComplete: (score: number, firstError?: TaxCase["steps"][number]["id"]) => void;
+  onComplete: (result: { score: number; firstError?: TaxCase["steps"][number]["id"]; writtenResponse: string; selfScore: number }) => void;
 }) {
+  const language = useLanguage();
   const [stepIndex, setStepIndex] = useState(0);
   const [answer, setAnswer] = useState<number>();
   const [numberAnswer, setNumberAnswer] = useState("");
   const [checked, setChecked] = useState(false);
   const [results, setResults] = useState<{ id: TaxCase["steps"][number]["id"]; correct: boolean; points: number }[]>([]);
   const [memo, setMemo] = useState("");
+  const [memoSaved, setMemoSaved] = useState(false);
+  const [selfScore, setSelfScore] = useState<number>();
   const done = stepIndex >= taxCase.steps.length;
   const step = taxCase.steps[Math.min(stepIndex, taxCase.steps.length - 1)];
   const maxScore = taxCase.steps.reduce((sum, item) => sum + item.points, 0);
@@ -938,6 +980,7 @@ function TaxCaseLab({ taxCase, position, total, confidence, setConfidence, onExi
     <div className="tax-case-progress">{taxCase.steps.map((item, index) => <span key={item.id} className={`${index < stepIndex ? (results[index]?.correct ? "passed" : "missed") : ""} ${index === stepIndex && !done ? "active" : ""}`}><b>{index + 1}</b><small>{["Steuerart","Subjekt","Norm","Rechnung","Ergebnis"][index]}</small></span>)}</div>
     <article className="question-card lab-card tax-case-card">
       <div className="lab-title"><span className="question-type">TAXATION FALLLABOR · {taxCase.topic}</span><h1>{taxCase.title}</h1><div className="case-facts"><b>Facts</b><p>{taxCase.facts}</p></div></div>
+      <ExamAidPanel subject="tax" language={language} />
       {!done && <>
         <div className="case-score"><span>Schritt {stepIndex + 1} von {taxCase.steps.length}</span><b>{score} / {maxScore} Punkte bisher</b></div>
         <h2>{step.title}</h2><p className="stage-intro">{step.prompt}</p>
@@ -949,10 +992,16 @@ function TaxCaseLab({ taxCase, position, total, confidence, setConfidence, onExi
       {done && <div className="tax-case-result">
         <div className="case-result-top"><span className={`result-ring ${score < maxScore * .7 ? "needs-work" : "mastered"}`}>{score}<small>/ {maxScore}</small></span><div><span className="question-type">TEILPUNKTE-AUSWERTUNG</span><h2>{score === maxScore ? "Fall vollständig beherrscht." : score >= maxScore * .7 ? "Solider Lösungsweg – einzelne Punkte nachschärfen." : "Dieser Fall wird adaptiv wiederholt."}</h2><p>{taxCase.trap}</p></div></div>
         <div className="rubric-grid">{taxCase.steps.map((item, index) => <div key={item.id} className={results[index]?.correct ? "rubric-right" : "rubric-wrong"}><span>{results[index]?.correct ? "✓" : "×"}</span><b>{["Steuerart","Steuersubjekt","Norm","Berechnung","Rechtsfolge"][index]}</b><strong>{results[index]?.points ?? 0}/{item.points}</strong></div>)}</div>
-        <label className="memo-field"><b>Write your own short exam answer</b><small>Use: issue → rule → application/calculation → conclusion. This field is deliberately not auto-corrected.</small><textarea value={memo} onChange={(event) => setMemo(event.target.value)} placeholder="In the present case ..." rows={5}/></label>
-        <details className="model-answer"><summary>Compare with model answer</summary><p>{taxCase.modelAnswer}</p></details>
+        <div className="written-answer-workflow">
+          <label className="memo-field"><b>{tr(language,"Eigene kurze Klausurantwort (2 Punkte)","Your short exam answer (2 points)")}</b><small>{tr(language,"Formuliere 3–5 Sätze nach: Problem → Norm → Anwendung/Rechnung → Ergebnis. Speichere erst deine Antwort; danach erscheint die Musterlösung.","Write 3–5 sentences using: issue → rule → application/calculation → conclusion. Save your response before viewing the model answer.")}</small><textarea disabled={memoSaved} value={memo} onChange={(event) => setMemo(event.target.value)} placeholder={tr(language,"Problematisch ist … Nach § … Im vorliegenden Fall … Daher …","The issue is … Under Sec. … In the present case … Therefore …")} rows={5}/></label>
+          {!memoSaved ? <div className="written-answer-actions"><button className="secondary-button" disabled={!memo.trim()} onClick={() => setMemoSaved(true)}>{tr(language,"Antwort speichern & vergleichen","Save answer & compare")}</button><button className="text-button" onClick={() => { setMemo(""); setMemoSaved(true); setSelfScore(0); }}>{tr(language,"Ohne Freitext fortfahren","Continue without written answer")}</button></div> : <>
+            <p className="saved-answer-note">✓ {memo ? tr(language,"Deine Antwort ist im Lernversuch gespeichert.","Your answer will be saved with this learning attempt.") : tr(language,"Freitext übersprungen: 0/2 Punkte.","Written response skipped: 0/2 points.")}</p>
+            <details className="model-answer" open><summary>{tr(language,"Mit Musterlösung vergleichen","Compare with model answer")}</summary><p>{taxCase.modelAnswer}</p></details>
+            <fieldset className="writing-self-score"><legend>{tr(language,"Wie vollständig ist deine Antwort im Vergleich?","How complete is your response?")}</legend>{[[0,tr(language,"0 Punkte · fehlt/anderer Lösungsweg","0 points · missing/different approach")],[1,tr(language,"1 Punkt · teilweise vollständig","1 point · partly complete")],[2,tr(language,"2 Punkte · Norm, Anwendung und Ergebnis enthalten","2 points · rule, application and conclusion included")]] .map(([value,label]) => <button type="button" key={value} className={selfScore === value ? "active" : ""} onClick={() => setSelfScore(value as number)}>{label}</button>)}</fieldset>
+          </>}
+        </div>
         <label className="exam-confidence">Wie sicher fühltest du dich?<select value={confidence} onChange={(event) => setConfidence(event.target.value as Confidence)}><option value="low">niedrig</option><option value="medium">mittel</option><option value="high">hoch</option></select></label>
-        <SourceBadge source={taxCase.source}/><button className="primary-button" onClick={() => onComplete(score, firstError)}>Nächster Steuerfall →</button>
+        <SourceBadge source={taxCase.source}/><button className="primary-button" disabled={!memoSaved || selfScore === undefined} onClick={() => onComplete({ score, firstError, writtenResponse: memo.trim(), selfScore: selfScore ?? 0 })}>{position >= total - 1 ? tr(language,"Falllabor abschließen","Finish case lab") : tr(language,"Nächsten Steuerfall laden","Load next tax case")} →</button>
       </div>}
     </article>
   </section>;
@@ -963,6 +1012,7 @@ function CalculationLab({ task, position, total, confidence, setConfidence, onEx
   task: LabTask; position: number; total: number; confidence: Confidence;
   setConfidence: (value: Confidence) => void; onExit: () => void; onComplete: (errors: string[]) => void;
 }) {
+  const language = useLanguage();
   const [stage, setStage] = useState<"formula" | "variables" | "prediction" | "steps" | "interpretation" | "result">("formula");
   const [formula, setFormula] = useState<number>();
   const [prediction, setPrediction] = useState<number>();
@@ -981,6 +1031,7 @@ function CalculationLab({ task, position, total, confidence, setConfidence, onEx
     <div className="trainer-head"><button className="text-button" onClick={onExit}>← Trainingsarten</button><span>Rechenstrecke {Math.min(position+1,total)} / {total}</span></div>
     <div className="lab-progress">{["Formel","Variablen","Prognose","Rechnen","Deuten"].map((label,index)=><span key={label} className={index <= ["formula","variables","prediction","steps","interpretation","result"].indexOf(stage) ? "active" : ""}>{index+1}<small>{label}</small></span>)}</div>
     <article className="question-card lab-card"><div className="lab-title"><span className="question-type">RECHENLABOR · {task.topic}</span><h1>{task.title}</h1><p>{task.prompt}</p></div>
+      <ExamAidPanel subject="portfolio" language={language} />
       {stage === "formula" && <><h2>1. Welches Modell brauchst du?</h2><p className="stage-intro">Wähle zuerst die passende Formel – noch ohne Zahlen einzusetzen.</p><div className="options formula-options">{task.formulaOptions.map((item,i)=><button key={item} disabled={checked} className={`${formula===i?"selected":""} ${checked&&i===0?"correct":""} ${checked&&formula===i&&i!==0?"incorrect":""}`} onClick={()=>setFormula(i)}><span>{String.fromCharCode(65+i)}</span>{item}</button>)}</div>{checked&&<div className={formula===0?"feedback correct-feedback":"feedback wrong-feedback"}><b>{formula===0?"Passende Formel erkannt.":"Diese Formel beantwortet eine andere Frage."}</b><p>{task.trap}</p></div>}<div className="question-actions">{checked?<button className="primary-button" onClick={()=>advance("variables")}>Werte zuordnen →</button>:<button className="primary-button" disabled={formula===undefined} onClick={()=>mark("formula",formula===0)}>Prüfen</button>}</div></>}
       {stage === "variables" && <><h2>2. Angaben den Variablen zuordnen</h2><p className="stage-intro">Sprich jede Zeile innerlich aus. So wird aus Symbolen ein Rechenplan.</p><div className="variable-grid">{task.variables.map(item=><div key={item.symbol}><strong>{item.symbol}</strong><b>{item.value}</b><span>{item.meaning}</span></div>)}</div><div className="feedback neutral-feedback"><b>Einheiten-Check</b><p>Prozentwerte beim Rechnen konsistent als Prozent oder Dezimalzahl verwenden. Nicht innerhalb eines Rechenschritts mischen.</p></div><div className="question-actions"><button className="primary-button" onClick={()=>advance("prediction")}>Ergebnisrichtung vorhersagen →</button></div></>}
       {stage === "prediction" && <><h2>3. Was erwartest du vor dem Rechnen?</h2><p className="stage-intro">Die Prognose ist dein Plausibilitätscheck gegen Taschenrechner- und Vorzeichenfehler.</p><div className="options">{task.predictionOptions.map((item,i)=><button key={item} disabled={checked} className={`${prediction===i?"selected":""} ${checked&&i===0?"correct":""} ${checked&&prediction===i&&i!==0?"incorrect":""}`} onClick={()=>setPrediction(i)}><span>{String.fromCharCode(65+i)}</span>{item}</button>)}</div>{checked&&<div className={prediction===0?"feedback correct-feedback":"feedback wrong-feedback"}><p>{task.prediction}</p></div>}<div className="question-actions">{checked?<button className="primary-button" onClick={()=>advance("steps")}>Jetzt rechnen →</button>:<button className="primary-button" disabled={prediction===undefined} onClick={()=>mark("prediction",prediction===0)}>Prognose prüfen</button>}</div></>}
@@ -991,7 +1042,7 @@ function CalculationLab({ task, position, total, confidence, setConfidence, onEx
   </section>;
 }
 
-function ErrorBook({ progress, navigate }: { progress: AppProgress; navigate: (view: View) => void }) {
+function ErrorBook({ progress, navigate }: { progress: AppProgress; navigate: Navigate }) {
   const latestBySkill = new Map<string, AnswerRecord>();
   [...progress.answers].reverse().forEach((item) => { const key=`${item.subject}:${item.topic}:${item.errorType??item.questionId}`; if (!latestBySkill.has(key)) latestBySkill.set(key, item); });
   const openRepairs = (progress.repairs ?? []).filter((item) => item.status === "open").sort((a, b) => a.dueAt.localeCompare(b.dueAt));
@@ -1010,6 +1061,7 @@ function ErrorBook({ progress, navigate }: { progress: AppProgress; navigate: (v
       explanation: "Der Fehler bleibt offen, bis du eine neue Variante in Anwendung oder Transfer mit mindestens 70 % löst.",
       date: attempt?.completedAt ?? repair.dueAt,
       source: quizQuestions.find((item) => item.id === attempt?.activityId)?.source,
+      writtenResponse: attempt?.writtenResponse,
     };
   });
   const repairPrompt=(answer:AnswerRecord)=> answer.subject==="portfolio" ? `Löse eine neue Zahlenvariante zu „${answer.topic}“. Kontrolliere besonders: ${answer.errorType??"vollständiger Rechenweg"}.` : `Prüfe einen neuen Sachverhalt zu „${answer.topic}“ mit Problem → Norm → Subsumtion/Rechnung → Ergebnis. Fokus: ${answer.errorType??"Normkette"}.`;
@@ -1023,31 +1075,41 @@ function ErrorBook({ progress, navigate }: { progress: AppProgress; navigate: (v
     explanation: question?.explanation ?? `${answer.errorType??"Der Lösungsweg"} war in der letzten Anwendung noch nicht sicher.`,
     date: answer.answeredAt,
     source: question?.source,
+    writtenResponse: undefined as string | undefined,
   }));
   const items = [...repairItems, ...legacyItems];
   const errorCounts = errorTypes.map((type) => ({ type, count: items.filter((item) => item.errorType === type).length })).filter((item) => item.count);
   return <section className="page"><PageHeading eyebrow="AUTOMATISCHE FEHLERKARTEN" title="Dein Fehlerbuch" description="Jeder offene Fehler wird als neue Transferaufgabe formuliert. So trainierst du die Ursache und lernst nicht nur die alte Antwort auswendig." />
     <div className="error-summary"><article className="panel"><strong>{items.length}</strong><span>offene Fehler</span></article><article className="panel"><strong>{items.filter((item) => item.confidence === "high").length}</strong><span>Scheinsicherheiten</span></article><article className="panel"><strong>{openRepairs.length}</strong><span>aktive Reparaturen</span></article></div>
     {errorCounts.length > 0 && <div className="error-chips">{errorCounts.map((item) => <span key={item.type}>{item.type} <b>{item.count}</b></span>)}</div>}
-    {items.length ? <div className="review-list">{items.map((item) => <article className="review-item wrong" key={item.key}><div><span>{item.confidence === "high" ? "Scheinsicherheit" : "Wiederholen"}</span><strong>{subjectName[item.subject]} · {item.topic}</strong><b>{item.errorType}</b></div><h3>{item.prompt}</h3><p><b>Reparaturregel:</b> {item.explanation}</p><small>Neu einzuplanen · letzter Fehler am {new Date(item.date).toLocaleDateString("de-DE")}</small>{item.source&&<SourceBadge source={item.source} />}</article>)}</div> : <EmptyState>Noch keine offenen Fehler. Löse einen Diagnosetest oder eine Prüfung, damit das Fehlerbuch gezielt arbeiten kann.</EmptyState>}
-    <button className="primary-button error-cta" onClick={() => navigate(items[0]?.subject === "portfolio" ? "trainer" : "quiz")}>{items.length ? "Transferaufgabe starten" : "Diagnosetest starten"} →</button>
+    {items.length ? <div className="review-list">{items.map((item) => <article className="review-item wrong" key={item.key}><div><span>{item.confidence === "high" ? "Scheinsicherheit" : "Wiederholen"}</span><strong>{subjectName[item.subject]} · {item.topic}</strong><b>{item.errorType}</b></div><h3>{item.prompt}</h3>{item.writtenResponse && <blockquote><b>Deine gespeicherte Klausurantwort:</b> {item.writtenResponse}</blockquote>}<p><b>Reparaturregel:</b> {item.explanation}</p><small>Neu einzuplanen · letzter Fehler am {new Date(item.date).toLocaleDateString("de-DE")}</small>{item.source&&<SourceBadge source={item.source} />}</article>)}</div> : <EmptyState>Noch keine offenen Fehler. Löse einen Diagnosetest oder eine Prüfung, damit das Fehlerbuch gezielt arbeiten kann.</EmptyState>}
+    <button className="primary-button error-cta" onClick={() => items[0] ? navigate("quiz", { subject: items[0].subject, topic: items[0].topic }) : navigate("quiz")}>{items.length ? "Passende Transferaufgabe starten" : "Diagnosetest starten"} →</button>
   </section>;
 }
 
-function DailyPlan({ progress, navigate }: { progress: AppProgress; navigate: (view: View) => void }) {
-  const weak = getTopicStats(progress);
+function DailyPlan({ progress, navigate }: { progress: AppProgress; navigate: Navigate }) {
+  const weak = topicMastery(progress).filter((item) => item.attempts > 0);
   const due = Object.values(progress.cards).filter((item) => new Date(item.dueAt) <= new Date()).length;
   const first = weak[0]; const second = weak[1];
-  const tasks: { minutes: number; title: string; detail: string; view: View }[] = [
-    { minutes: 10, title: "Fällige Fehler & Karten", detail: due ? `${due} Karte${due === 1 ? "" : "n"} sind heute fällig` : "Kurze Aktivierung aus dem Fehlerbuch", view: due ? "cards" : "errors" },
-    { minutes: 15, title: first?.topic ?? "Portfolio-Rechenroutine", detail: first ? `${subjectName[first.subject]} · aktuell ${first.accuracy}%` : "CAPM, Beta und Portfoliovarianz", view: first?.subject === "tax" ? "quiz" : "trainer" },
-    { minutes: 15, title: second?.topic ?? "Taxation-Fallroutine", detail: second ? `${subjectName[second.subject]} · aktuell ${second.accuracy}%` : "Norm, Tatbestand und Rechtsfolge", view: second?.subject === "portfolio" ? "trainer" : "quiz" },
-    { minutes: 10, title: "Gemischter Abruf", detail: "Unsicherheiten mit Sicherheitsangabe prüfen", view: "quiz" },
-    { minutes: 5, title: "Formeln & Normen", detail: "Schneller Abschluss ohne Unterlagen", view: "trainer" },
+  const totalMinutes = Math.max(5, progress.settings.dailyMinutes);
+  const minuteWeights = [.2, .3, .25, .15, .1];
+  const allocatedMinutes = minuteWeights.map((weight) => Math.floor(totalMinutes * weight));
+  let unallocated = totalMinutes - allocatedMinutes.reduce((sum, value) => sum + value, 0);
+  for (let index = 0; unallocated > 0; index = (index + 1) % allocatedMinutes.length) {
+    allocatedMinutes[index] += 1;
+    unallocated -= 1;
+  }
+  const allTasks: { minutes: number; title: string; detail: string; view: View; target?: LearningTarget }[] = [
+    { minutes: allocatedMinutes[0], title: "Fällige Fehler & Karten", detail: due ? `${due} Karte${due === 1 ? "" : "n"} sind heute fällig` : "Kurze Aktivierung aus dem Fehlerbuch", view: due ? "cards" : "errors" },
+    { minutes: allocatedMinutes[1], title: first?.topic ?? "Portfolio-Rechenroutine", detail: first ? `${subjectName[first.subject]} · Lernstand ${first.mastery}%` : "CAPM, Beta und Portfoliovarianz", view: "quiz", target: first ? { subject: first.subject, topic: first.topic } : { subject: "portfolio", topic: "CAPM, SML & Beta" } },
+    { minutes: allocatedMinutes[2], title: second?.topic ?? "Taxation-Fallroutine", detail: second ? `${subjectName[second.subject]} · Lernstand ${second.mastery}%` : "Norm, Tatbestand und Rechtsfolge", view: "quiz", target: second ? { subject: second.subject, topic: second.topic } : { subject: "tax", topic: "Tax Liability" } },
+    { minutes: allocatedMinutes[3], title: "Gemischter Abruf", detail: "Unsicherheiten mit Sicherheitsangabe prüfen", view: "quiz" },
+    { minutes: allocatedMinutes[4], title: "Formeln & Normen", detail: "Schneller Abschluss ohne Unterlagen", view: "trainer" },
   ];
-  return <section className="page"><PageHeading eyebrow={`${daysUntil(progress.settings.examDate)} TAGE BIS ZUR PRÜFUNG`} title={`Deine ${progress.settings.dailyMinutes + 10}-Minuten-Session`} description="Der Plan wird aus fälligen Wiederholungen und deinen schwächsten Themen berechnet. Neue Ergebnisse verändern automatisch die nächste Session." />
-    <div className="plan-layout"><div className="plan-list">{tasks.map((task, index) => <button key={`${task.title}-${index}`} onClick={() => navigate(task.view)}><span>{String(index + 1).padStart(2, "0")}</span><div><h3>{task.title}</h3><p>{task.detail}</p></div><b>{task.minutes} Min →</b></button>)}</div>
-      <aside className="panel plan-aside"><h2>Heutiger Fokus</h2><div className="plan-ring"><strong>{tasks.reduce((sum, item) => sum + item.minutes, 0)}</strong><span>Minuten</span></div><p>{first ? `Größter Hebel: ${first.topic}.` : "Starte mit der Gesamtdiagnose, damit der Plan persönlich wird."}</p><button className="primary-button" onClick={() => navigate(first ? tasks[0].view : "quiz")}>Session starten →</button></aside></div>
+  const tasks = allTasks.filter((task) => task.minutes > 0);
+  return <section className="page"><PageHeading eyebrow={`${daysUntil(progress.settings.examDate)} TAGE BIS ZUR PRÜFUNG`} title={`Deine ${tasks.reduce((sum, item) => sum + item.minutes, 0)}-Minuten-Session`} description="Der Plan wird aus fälligen Wiederholungen und deinen schwächsten Themen berechnet. Neue Ergebnisse verändern automatisch die nächste Session." />
+    <div className="plan-layout"><div className="plan-list">{tasks.map((task, index) => <button key={`${task.title}-${index}`} onClick={() => navigate(task.view, task.target)}><span>{String(index + 1).padStart(2,"0")}</span><div><h3>{task.title}</h3><p>{task.detail}</p></div><b>{task.minutes} Min →</b></button>)}</div>
+      <aside className="panel plan-aside"><h2>Heutiger Fokus</h2><div className="plan-ring"><strong>{tasks.reduce((sum, item) => sum + item.minutes, 0)}</strong><span>Minuten</span></div><p>{first ? `Größter Hebel: ${first.topic}.` : "Starte mit der Gesamtdiagnose, damit der Plan persönlich wird."}</p><button className="primary-button" onClick={() => navigate(tasks[0].view, tasks[0].target)}>Session starten →</button></aside></div>
   </section>;
 }
 

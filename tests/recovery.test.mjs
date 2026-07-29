@@ -98,3 +98,44 @@ test("connects navigation, attempts, cloud merge and realistic exam UI", async (
   assert.match(examUi, /Teilpunkte-Rubrik/);
   assert.match(examUi, /markedQuestionIds/);
 });
+
+test("deep-links adaptive recommendations and resets every lab item", async () => {
+  const [page, adaptive] = await Promise.all([
+    read("../app/page.tsx"),
+    read("../lib/adaptive.ts"),
+  ]);
+  assert.match(page, /type LearningTarget = \{ subject: Subject; topic: string \}/);
+  assert.match(page, /navigate\(targetView\(item\.attempts\), \{ subject: item\.subject, topic: item\.topic \}\)/);
+  assert.match(page, /initialTopic=\{learningTarget\?\.topic\}/);
+  assert.match(page, /topic === "all" \|\| item\.topic === topic/);
+  assert.match(page, /<TaxCaseLab key=\{taxLabCases\[taxLabIndex\]\.id\}/);
+  assert.match(page, /<CalculationLab key=\{labTasks\[labIndex\]\.id\}/);
+  assert.match(page, /const showSubjectSwitcher = \["dashboard", "focus", "mastery", "plan"\]/);
+  assert.match(page, /dailyMinutes:value/);
+  assert.match(adaptive, /effectivePortfolioWeight/);
+});
+
+test("persists tax written answers and ships source-bound exam aids", async () => {
+  const [page, types, aids, formulas, calculator, examUi, adaptive] = await Promise.all([
+    read("../app/page.tsx"),
+    read("../lib/types.ts"),
+    read("../app/examAids.tsx"),
+    read("../lib/data/examAids.ts"),
+    read("../lib/calculator.ts"),
+    read("../app/examWorkspace.tsx"),
+    read("../lib/adaptive.ts"),
+  ]);
+  assert.match(page, /Antwort speichern & vergleichen/);
+  assert.match(page, /writtenResponse, selfScore/);
+  assert.match(types, /writtenResponse\?: string/);
+  assert.match(types, /selfScore\?: number/);
+  assert.equal((formulas.match(/number: \d+/g) ?? []).length, 44);
+  assert.match(aids, /Formula_Sheet_2024_Exam\.pdf/);
+  assert.match(aids, /Copy of German Tax Exam Prep\.pdf/);
+  assert.match(aids, /Betriebsaufspaltung/);
+  assert.match(aids, /TaxBurdenSimulator/);
+  assert.match(calculator, /class ExpressionParser/);
+  assert.doesNotMatch(calculator, /\beval\s*\(|new Function/);
+  assert.match(examUi, /ExamAidPanel/);
+  assert.match(adaptive, /item\.mode === "flashcard" \? \.65/);
+});
