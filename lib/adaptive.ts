@@ -1,5 +1,5 @@
 import { flashcards, quizQuestions } from "./data";
-import type { AnswerRecord, AppProgress, Subject } from "./types";
+import type { AnswerRecord, AppProgress, LearningAttempt, LearningStage, Subject } from "./types";
 
 export type TopicMastery = {
   subject: Subject;
@@ -12,51 +12,91 @@ export type TopicMastery = {
   mastery: number;
   status: "neu" | "Lücke" | "im Aufbau" | "fast sicher" | "beherrscht";
   nextDueAt: string;
+  highestStage: LearningStage | "none";
+  variants: number;
 };
 
-const expectedMs = (answer: AnswerRecord) => answer.questionId.startsWith("lab-") || answer.questionId.startsWith("tax-lab-") ? 8 * 60_000 : 75_000;
+const stageRank: Record<LearningStage, number> = { recall: 1, application: 2, transfer: 3, timed: 4 };
+
+function legacyAttempt(answer: AnswerRecord): LearningAttempt {
+  return {
+    id: `legacy-${answer.id}`,
+    activityId: answer.questionId,
+    variantId: answer.questionId,
+    subject: answer.subject,
+    topic: answer.topic,
+    mode: answer.examSessionId ? "exam" : "quiz",
+    stage: answer.examSessionId ? "timed" : answer.questionId.startsWith("lab-") || answer.questionId.startsWith("tax-lab-") ? "application" : "recall",
+    score: answer.correct ? 1 : 0,
+    maxScore: 1,
+    durationMs: answer.durationMs,
+    confidence: answer.confidence,
+    errorTypes: answer.errorType ? [answer.errorType] : [],
+    hintsUsed: 0,
+    completedAt: answer.answeredAt,
+    examSessionId: answer.examSessionId,
+  };
+}
 
 export function topicMastery(progress: AppProgress): TopicMastery[] {
-  const all = new Map<string, { subject: Subject; topic: string; answers: AnswerRecord[] }>();
+  const all = new Map<string, { subject: Subject; topic: string; attempts: LearningAttempt[] }>();
   [...flashcards, ...quizQuestions].forEach((item) => {
     const key = `${item.subject}:${item.topic}`;
-    if (!all.has(key)) all.set(key, { subject: item.subject, topic: item.topic, answers: [] });
+    if (!all.has(key)) all.set(key, { subject: item.subject, topic: item.topic, attempts: [] });
   });
-  progress.answers.forEach((answer) => {
-    const key = `${answer.subject}:${answer.topic}`;
-    const row = all.get(key) ?? { subject: answer.subject, topic: answer.topic, answers: [] };
-    row.answers.push(answer);
+  const explicitIds = new Set((progress.attempts ?? []).map((item) => item.id));
+  const attempts = [
+    ...(progress.attempts ?? []),
+    ...progress.answers.filter((answer) => !explicitIds.has(`answer-${answer.id}`)).map(legacyAttempt),
+  ].sort((a, b) => a.completedAt.localeCompare(b.completedAt));
+  attempts.forEach((attempt) => {
+    const key = `${attempt.subject}:${attempt.topic}`;
+    const row = all.get(key) ?? { subject: attempt.subject, topic: attempt.topic, attempts: [] };
+    row.attempts.push(attempt);
     all.set(key, row);
   });
 
-  return [...all.values()].map(({ subject, topic, answers }) => {
-    const recent = answers.slice(-8);
+  return [...all.values()].map(({ subject, topic, attempts: topicAttempts }) => {
+    const recent = topicAttempts.slice(-8);
     const weightTotal = recent.reduce((sum, _, index) => sum + index + 1, 0) || 1;
-    const accuracy = Math.round(recent.reduce((sum, item, index) => sum + (item.correct ? index + 1 : 0), 0) / weightTotal * 100);
+    const accuracy = Math.round(recent.reduce((sum, item, index) => sum + (item.maxScore ? item.score / item.maxScore : 0) * (index + 1), 0) / weightTotal * 100);
     const timed = recent.filter((item) => item.durationMs > 0);
-    const speed = timed.length ? Math.round(timed.reduce((sum, item) => sum + Math.min(1, expectedMs(item) / item.durationMs), 0) / timed.length * 100) : 50;
-    const calibrated = recent.filter((item) => (item.confidence === "high") === item.correct || (item.confidence === "low") !== item.correct).length;
+    const speed = timed.length ? Math.round(timed.reduce((sum, item) => {
+      const expected = item.stage === "timed" ? 10 * 60_000 : item.mode === "calculation-lab" || item.mode === "tax-case" ? 8 * 60_000 : 75_000;
+      return sum + Math.min(1, expected / item.durationMs);
+    }, 0) / timed.length * 100) : 50;
+    const calibrated = recent.filter((item) => {
+      const correct = item.maxScore > 0 && item.score / item.maxScore >= .7;
+      return (item.confidence === "high") === correct || (item.confidence === "low") !== correct;
+    }).length;
     const confidenceCalibration = recent.length ? Math.round(calibrated / recent.length * 100) : 50;
-    const days = new Set(answers.map((item) => item.answeredAt.slice(0, 10))).size;
-    const transfer = Math.min(100, days * 35 + Math.min(30, answers.length * 5));
-    const mastery = answers.length ? Math.round(accuracy * .55 + speed * .15 + confidenceCalibration * .1 + transfer * .2) : 0;
-    const last = answers.at(-1);
-    const dangerous = recent.some((item) => !item.correct && item.confidence === "high");
+    const days = new Set(topicAttempts.map((item) => item.completedAt.slice(0, 10))).size;
+    const variants = new Set(topicAttempts.map((item) => item.variantId)).size;
+    const highestRank = topicAttempts.reduce((rank, item) => Math.max(rank, stageRank[item.stage]), 0);
+    const highestStage = (Object.entries(stageRank).find(([, rank]) => rank === highestRank)?.[0] ?? "none") as LearningStage | "none";
+    const evidence = Math.min(100, highestRank * 18 + Math.min(18, variants * 6) + Math.min(10, days * 5));
+    const mastery = topicAttempts.length ? Math.round(accuracy * .55 + speed * .1 + confidenceCalibration * .1 + evidence * .25) : 0;
+    const last = topicAttempts.at(-1);
+    const dangerous = recent.some((item) => item.maxScore > 0 && item.score / item.maxScore < .7 && item.confidence === "high");
     const intervalDays = mastery >= 80 && days >= 2 ? 7 : mastery >= 60 ? 3 : dangerous ? 0 : 1;
-    const nextDueAt = new Date((last ? new Date(last.answeredAt).getTime() : 0) + intervalDays * 86_400_000).toISOString();
-    const status: TopicMastery["status"] = !answers.length ? "neu" : mastery < 45 ? "Lücke" : mastery < 65 ? "im Aufbau" : mastery < 80 || days < 2 ? "fast sicher" : "beherrscht";
-    return { subject, topic, attempts: answers.length, days, accuracy, speed, confidenceCalibration, mastery, status, nextDueAt };
+    const nextDueAt = new Date((last ? new Date(last.completedAt).getTime() : 0) + intervalDays * 86_400_000).toISOString();
+    const status: TopicMastery["status"] = !topicAttempts.length ? "neu" : mastery < 45 ? "Lücke" : mastery < 65 ? "im Aufbau" : mastery < 80 || highestRank < 3 ? "fast sicher" : "beherrscht";
+    return { subject, topic, attempts: topicAttempts.length, days, accuracy, speed, confidenceCalibration, mastery, status, nextDueAt, highestStage, variants };
   }).sort((a, b) => a.mastery - b.mastery || b.attempts - a.attempts);
 }
 
 export function scoreForecast(progress: AppProgress, subject: Subject) {
-  const baseline = subject === "portfolio" ? 29 : 50;
-  const rows = topicMastery(progress).filter((item) => item.subject === subject && item.attempts > 0);
-  if (!rows.length) return { low: baseline, high: baseline, central: baseline };
+  const baseline = subject === "portfolio" ? 31 : 50;
+  const rows = topicMastery(progress).filter((item) => item.subject === subject);
+  if (!rows.some((item) => item.attempts > 0)) return { low: baseline, high: baseline, central: baseline };
   const examScores = progress.exams.filter((item) => item.subject === subject && item.score !== undefined && item.maxScore).slice(-3).map((item) => item.score! / item.maxScore! * 90);
-  const masteryEstimate = rows.reduce((sum, item) => sum + item.mastery, 0) / rows.length * .9;
-  const central = Math.round(examScores.length ? (masteryEstimate * .55 + examScores.reduce((a,b)=>a+b,0)/examScores.length * .45) : baseline * .3 + masteryEstimate * .7);
-  const uncertainty = Math.max(4, 12 - Math.min(8, rows.reduce((sum, item) => sum + item.attempts, 0) / 5));
+  const topicWeights = new Map<string, number>();
+  quizQuestions.filter((item) => item.subject === subject).forEach((item) => topicWeights.set(item.topic, (topicWeights.get(item.topic) ?? 0) + item.points));
+  const weightTotal = rows.reduce((sum, item) => sum + (topicWeights.get(item.topic) ?? 3), 0) || 1;
+  const masteryEstimate = rows.reduce((sum, item) => sum + item.mastery * (topicWeights.get(item.topic) ?? 3), 0) / weightTotal * .9;
+  const central = Math.round(examScores.length ? (masteryEstimate * .45 + examScores.reduce((a,b)=>a+b,0)/examScores.length * .55) : baseline * .35 + masteryEstimate * .65);
+  const covered = rows.filter((item) => item.attempts > 0).length / Math.max(1, rows.length);
+  const uncertainty = Math.max(5, Math.round(15 - covered * 7 - Math.min(3, examScores.length)));
   return { low: Math.max(0, Math.round(central - uncertainty)), high: Math.min(90, Math.round(central + uncertainty)), central };
 }
 
@@ -91,9 +131,9 @@ export function subjectCoverage(progress: AppProgress, subject: Subject) {
   return {
     total: rows.length,
     learned: rows.filter((item) => item.attempts > 0).length,
-    practised: rows.filter((item) => item.attempts >= 2).length,
-    transferred: rows.filter((item) => item.days >= 2).length,
-    examReady: rows.filter((item) => item.status === "beherrscht").length,
+    practised: rows.filter((item) => item.highestStage !== "none" && stageRank[item.highestStage] >= 2).length,
+    transferred: rows.filter((item) => item.highestStage !== "none" && stageRank[item.highestStage] >= 3 && item.variants >= 2).length,
+    examReady: rows.filter((item) => item.highestStage === "timed" && item.mastery >= 70).length,
     percent: (value: number) => Math.round(value / total * 100),
   };
 }

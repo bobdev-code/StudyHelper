@@ -1,23 +1,23 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { flashcards, learningVideos, modelOverviews, quizQuestions } from "@/lib/data";
 import {
   addAnswer,
+  addLearningAttempt,
   defaultProgress,
   loadProgress,
+  mergeProgress,
   resetProgress,
   reviewCard,
   saveProgress,
-  upsertExam,
 } from "@/lib/storage";
 import type {
   AnswerRecord,
   AppProgress,
   Confidence,
   ErrorType,
-  ExamSession,
   Flashcard,
   Language,
   QuizQuestion,
@@ -28,8 +28,10 @@ import { createLabTasks, labErrorByStage, type LabTask } from "@/lib/data/calcul
 import { taxCases, taxCaseErrorByStep, type TaxCase } from "@/lib/data/taxCaseLab";
 import { getRememberMe, getSupabase, setRememberMe } from "@/lib/supabase";
 import { adaptiveQueue, scoreForecast, subjectCoverage, topicMastery, type PlanSubject } from "@/lib/adaptive";
+import { ExamWorkspace } from "./examWorkspace";
 
 type View = "dashboard" | "focus" | "mastery" | "plan" | "cards" | "quiz" | "trainer" | "errors" | "models" | "videos" | "exam";
+type SubjectScope = Subject | "all";
 
 const subjectName: Record<Subject, string> = {
   portfolio: "Portfolio Management",
@@ -46,19 +48,26 @@ const errorTypes: ErrorType[] = [
   "Flüchtigkeitsfehler",
 ];
 
-const navItems: { view: View; de: string; en: string; icon: string }[] = [
-  { view: "dashboard", de: "Dashboard", en: "Dashboard", icon: "▦" },
-  { view: "focus", de: "Optimal lernen", en: "Optimal session", icon: "◎" },
-  { view: "mastery", de: "Kompetenzen", en: "Mastery", icon: "◔" },
-  { view: "plan", de: "Tagesplan", en: "Daily plan", icon: "✓" },
-  { view: "cards", de: "Karteikarten", en: "Flashcards", icon: "▱" },
-  { view: "quiz", de: "Diagnose & Quiz", en: "Assessment & quiz", icon: "?" },
-  { view: "trainer", de: "Fachtrainer", en: "Subject training", icon: "∑" },
-  { view: "errors", de: "Fehlerbuch", en: "Error log", icon: "!" },
-  { view: "models", de: "Modelle", en: "Models", icon: "⌁" },
-  { view: "videos", de: "Video-Playlist", en: "Video playlist", icon: "▶" },
-  { view: "exam", de: "Prüfungsmodus", en: "Exam mode", icon: "◇" },
+const navItems: { view: View; de: string; en: string; icon: string; group: "overview" | "plan" | "learn" | "test" }[] = [
+  { view: "dashboard", de: "Dashboard", en: "Dashboard", icon: "▦", group: "overview" },
+  { view: "focus", de: "Optimal lernen", en: "Optimal session", icon: "◎", group: "plan" },
+  { view: "mastery", de: "Kompetenzen", en: "Mastery", icon: "◔", group: "plan" },
+  { view: "plan", de: "Tagesplan", en: "Daily plan", icon: "✓", group: "plan" },
+  { view: "cards", de: "Karteikarten", en: "Flashcards", icon: "▱", group: "learn" },
+  { view: "trainer", de: "Fachtrainer", en: "Subject training", icon: "∑", group: "learn" },
+  { view: "models", de: "Modelle", en: "Models", icon: "⌁", group: "learn" },
+  { view: "videos", de: "Video-Playlist", en: "Video playlist", icon: "▶", group: "learn" },
+  { view: "quiz", de: "Diagnose & Quiz", en: "Assessment & quiz", icon: "?", group: "test" },
+  { view: "errors", de: "Fehlerbuch", en: "Error log", icon: "!", group: "test" },
+  { view: "exam", de: "Prüfungsmodus", en: "Exam mode", icon: "◇", group: "test" },
 ];
+
+const navGroups = [
+  { id: "overview", de: "Überblick", en: "Overview" },
+  { id: "plan", de: "Planen", en: "Plan" },
+  { id: "learn", de: "Lernen", en: "Learn" },
+  { id: "test", de: "Prüfen", en: "Test" },
+] as const;
 
 const LanguageContext = createContext<Language>("de");
 const useLanguage = () => useContext(LanguageContext);
@@ -92,21 +101,6 @@ function shuffle<T>(items: T[]) {
   return [...items].sort(() => Math.random() - 0.5);
 }
 
-function pickQuestionsForPoints(items: QuizQuestion[], target: number) {
-  const combinations = new Map<number, QuizQuestion[]>([[0, []]]);
-  for (const item of shuffle(items)) {
-    const existing = [...combinations.entries()].sort((a, b) => b[0] - a[0]);
-    for (const [points, selected] of existing) {
-      const next = points + item.points;
-      if (next <= target && !combinations.has(next)) {
-        combinations.set(next, [...selected, item]);
-      }
-    }
-    if (combinations.has(target)) return combinations.get(target)!;
-  }
-  return combinations.get(Math.max(...combinations.keys())) ?? [];
-}
-
 function SourceBadge({ source }: { source: Flashcard["source"] }) {
   const language = useLanguage();
   return (
@@ -127,6 +121,7 @@ function EmptyState({ children }: { children: React.ReactNode }) {
 
 export default function Home() {
   const [view, setView] = useState<View>("dashboard");
+  const [subjectScope, setSubjectScope] = useState<SubjectScope>("all");
   const [quizPreset, setQuizPreset] = useState<"tax-diagnostic">();
   const [progress, setProgress] = useState<AppProgress>(defaultProgress);
   const [ready, setReady] = useState(false);
@@ -183,7 +178,7 @@ export default function Home() {
         if (cancelled) return;
         if (error) throw error;
         if (data?.progress) {
-          setProgress(data.progress as AppProgress);
+          setProgress((current) => mergeProgress(current, data.progress as AppProgress));
         } else {
           const { error: uploadError } = await getSupabase().from("learning_progress").insert({ user_id: user.id, progress: progressRef.current });
           if (uploadError) throw uploadError;
@@ -244,15 +239,18 @@ export default function Home() {
           <div><strong>{tr(language,"Lerntrainer","StudyHelper")}</strong><small>{tr(language,"Nachprüfung 2026","Resit exam 2026")}</small></div>
         </div>
         <nav aria-label="Hauptnavigation">
-          {navItems.map((item) => (
-            <button
-              key={item.view}
-              className={view === item.view ? "nav-item active" : "nav-item"}
-              onClick={() => navigate(item.view)}
-            >
-              <span aria-hidden="true">{item.icon}</span>{item[language]}
-            </button>
-          ))}
+          {navGroups.map((group) => <div className="nav-group" key={group.id}>
+            <small>{group[language]}</small>
+            {navItems.filter((item) => item.group === group.id).map((item) => (
+              <button
+                key={item.view}
+                className={view === item.view ? "nav-item active" : "nav-item"}
+                onClick={() => navigate(item.view)}
+              >
+                <span aria-hidden="true">{item.icon}</span>{item[language]}
+              </button>
+            ))}
+          </div>)}
         </nav>
         <div className="sidebar-footer">
           <span className="pulse-dot" />
@@ -268,6 +266,11 @@ export default function Home() {
           <button className="mobile-account-button" onClick={() => setAuthOpen(true)} aria-label={tr(language,"Konto öffnen","Open account")}>{user ? "✓" : "♙"}</button>
         </header>
         <div className="top-actions">
+          <div className="subject-switcher" role="group" aria-label={tr(language,"Fachbereich wählen","Choose subject area")}>
+            <button className={subjectScope === "all" ? "active" : ""} onClick={() => setSubjectScope("all")}>{tr(language,"Übersicht","Overview")}</button>
+            <button className={subjectScope === "portfolio" ? "active" : ""} onClick={() => setSubjectScope("portfolio")}>Portfolio</button>
+            <button className={subjectScope === "tax" ? "active" : ""} onClick={() => setSubjectScope("tax")}>Taxation</button>
+          </div>
           <div className="language-switch" role="group" aria-label={tr(language,"Sprache wählen","Choose language")}>
             <button className={language === "de" ? "active" : ""} onClick={() => setLanguage("de")} aria-pressed={language === "de"}><span className="flag-icon flag-de" aria-hidden="true" /> DE</button>
             <button className={language === "en" ? "active" : ""} onClick={() => setLanguage("en")} aria-pressed={language === "en"}><span className="flag-icon flag-gb" aria-hidden="true" /> EN</button>
@@ -277,17 +280,17 @@ export default function Home() {
             {user ? (user.user_metadata?.display_name || user.email) : tr(language,"Anmelden","Sign in")}
           </button>
         </div>
-        {view === "dashboard" && <Dashboard progress={progress} navigate={navigate} />}
+        {view === "dashboard" && <Dashboard progress={progress} navigate={navigate} subjectScope={subjectScope} />}
         {view === "focus" && <AdaptiveSession progress={progress} setProgress={setProgress} navigate={navigate} />}
         {view === "mastery" && <MasteryMatrix progress={progress} navigate={navigate} />}
         {view === "plan" && <DailyPlan progress={progress} navigate={navigate} />}
-        {view === "cards" && <Cards progress={progress} setProgress={setProgress} />}
-        {view === "quiz" && <Quiz setProgress={setProgress} preset={quizPreset} onPresetApplied={() => setQuizPreset(undefined)} />}
+        {view === "cards" && <Cards key={subjectScope} progress={progress} setProgress={setProgress} initialSubject={subjectScope} />}
+        {view === "quiz" && <Quiz key={`${subjectScope}-${quizPreset ?? "regular"}`} setProgress={setProgress} preset={quizPreset} initialSubject={subjectScope} onPresetApplied={() => setQuizPreset(undefined)} />}
         {view === "trainer" && <SubjectTrainer progress={progress} setProgress={setProgress} onStartTaxDiagnostic={() => { setQuizPreset("tax-diagnostic"); navigate("quiz"); }} />}
         {view === "errors" && <ErrorBook progress={progress} navigate={navigate} />}
         {view === "models" && <Models />}
         {view === "videos" && <Videos />}
-        {view === "exam" && <Exam progress={progress} setProgress={setProgress} />}
+        {view === "exam" && <ExamWorkspace key={subjectScope} progress={progress} setProgress={setProgress} language={language} initialSubject={subjectScope === "all" ? undefined : subjectScope} />}
         <footer className="app-footer">
           <span>{user ? tr(language, cloudState === "synced" ? "Cloud-Lernstand synchronisiert" : cloudState === "error" ? "Synchronisierung fehlgeschlagen" : "Cloud-Lernstand wird synchronisiert …", cloudState === "synced" ? "Cloud progress synced" : cloudState === "error" ? "Sync failed" : "Syncing cloud progress …") : tr(language,"Lokaler Lernstand · für Gerätewechsel anmelden","Local progress · sign in to use other devices")}</span>
           <button
@@ -362,8 +365,21 @@ function AuthDialog({ user, language, onClose }: { user: User | null; language: 
   </div>;
 }
 
-function Dashboard({ progress, navigate }: { progress: AppProgress; navigate: (view: View) => void }) {
+function Dashboard({ progress, navigate, subjectScope }: { progress: AppProgress; navigate: (view: View) => void; subjectScope: SubjectScope }) {
   const language = useLanguage();
+  const [daypart, setDaypart] = useState<"morning" | "day" | "evening">("day");
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      const hour = new Date().getHours();
+      setDaypart(hour < 11 ? "morning" : hour < 18 ? "day" : "evening");
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+  const greeting = daypart === "morning"
+    ? tr(language, "Guten Morgen, Admin", "Good morning, Admin")
+    : daypart === "evening"
+      ? tr(language, "Guten Abend, Admin", "Good evening, Admin")
+      : tr(language, "Guten Tag, Admin", "Good afternoon, Admin");
   const metrics = useMemo(() => {
     const result = { portfolio: { correct: 0, total: 0 }, tax: { correct: 0, total: 0 } };
     progress.answers.forEach((answer) => {
@@ -387,13 +403,13 @@ function Dashboard({ progress, navigate }: { progress: AppProgress; navigate: (v
   return (
     <section className="page dashboard-page">
       <div className="dashboard-heading">
-        <div><p className="eyebrow">{tr(language,"PRÜFUNG · 04. AUGUST 2026","EXAM · 4 AUGUST 2026")}</p><h1>{tr(language,"Guten Abend, Admin","Good evening, Admin")}</h1><p>{tr(language,"Heute zählt nicht Perfektion, sondern der nächste sichere Punkt.","Today is not about perfection, but about securing the next point.")}</p></div>
+        <div><p className="eyebrow">{tr(language,"PRÜFUNG · 04. AUGUST 2026","EXAM · 4 AUGUST 2026")}</p><h1>{greeting}</h1><p>{subjectScope === "all" ? tr(language,"Heute zählt nicht Perfektion, sondern der nächste sichere Punkt.","Today is not about perfection, but about securing the next point.") : tr(language,`${subjectName[subjectScope]} ist als Fachbereich ausgewählt.`,`${subjectName[subjectScope]} is selected.`)}</p></div>
         <div className="countdown"><span className="calendar-icon">▦</span><strong>{daysUntil(progress.settings.examDate)}</strong><span>{tr(language,"Tage bis zur Prüfung","days until the exam")}</span></div>
       </div>
 
       <div className="subject-grid">
-        <SubjectCard subject="portfolio" score={pScore} accuracy={metrics.portfolio.total ? pct(metrics.portfolio.correct, metrics.portfolio.total) : 32} priority />
-        <SubjectCard subject="tax" score={tScore} accuracy={metrics.tax.total ? pct(metrics.tax.correct, metrics.tax.total) : 56} />
+        {subjectScope !== "tax" ? <SubjectCard subject="portfolio" score={pScore} accuracy={metrics.portfolio.total ? pct(metrics.portfolio.correct, metrics.portfolio.total) : 32} priority /> : null}
+        {subjectScope !== "portfolio" ? <SubjectCard subject="tax" score={tScore} accuracy={metrics.tax.total ? pct(metrics.tax.correct, metrics.tax.total) : 56} /> : null}
       </div>
 
       <div className="dashboard-lower">
@@ -496,9 +512,9 @@ function SubjectCard({ subject, score, accuracy, priority = false }: { subject: 
   );
 }
 
-function Cards({ progress, setProgress }: { progress: AppProgress; setProgress: React.Dispatch<React.SetStateAction<AppProgress>> }) {
+function Cards({ progress, setProgress, initialSubject }: { progress: AppProgress; setProgress: React.Dispatch<React.SetStateAction<AppProgress>>; initialSubject: SubjectScope }) {
   const language = useLanguage();
-  const [subject, setSubject] = useState<Subject | "all">("portfolio");
+  const [subject, setSubject] = useState<Subject | "all">(initialSubject);
   const [topic, setTopic] = useState("all");
   const [query, setQuery] = useState("");
   const [favorites, setFavorites] = useState(false);
@@ -515,7 +531,26 @@ function Cards({ progress, setProgress }: { progress: AppProgress; setProgress: 
   const card = filtered[index % Math.max(1, filtered.length)];
   const review = (result: "known" | "uncertain" | "wrong") => {
     if (!card) return;
-    setProgress((current) => ({ ...current, cards: { ...current.cards, [card.id]: reviewCard(current.cards[card.id], result) } }));
+    const completedAt = new Date().toISOString();
+    setProgress((current) => addLearningAttempt(
+      { ...current, cards: { ...current.cards, [card.id]: reviewCard(current.cards[card.id], result) } },
+      {
+        id: uid("card-attempt"),
+        activityId: card.id,
+        variantId: card.id,
+        subject: card.subject,
+        topic: card.topic,
+        mode: "flashcard",
+        stage: "recall",
+        score: result === "known" ? 1 : result === "uncertain" ? .5 : 0,
+        maxScore: 1,
+        durationMs: 0,
+        confidence: result === "known" ? "high" : result === "uncertain" ? "medium" : "low",
+        errorTypes: result === "wrong" ? ["Wissenslücke"] : [],
+        hintsUsed: 0,
+        completedAt,
+      },
+    ));
     setFlipped(false);
     setIndex((value) => (value + 1) % Math.max(1, filtered.length));
   };
@@ -555,9 +590,9 @@ function Cards({ progress, setProgress }: { progress: AppProgress; setProgress: 
   );
 }
 
-function Quiz({ setProgress, preset, onPresetApplied }: { setProgress: React.Dispatch<React.SetStateAction<AppProgress>>; preset?: "tax-diagnostic"; onPresetApplied: () => void }) {
+function Quiz({ setProgress, preset, initialSubject, onPresetApplied }: { setProgress: React.Dispatch<React.SetStateAction<AppProgress>>; preset?: "tax-diagnostic"; initialSubject: SubjectScope; onPresetApplied: () => void }) {
   const language = useLanguage();
-  const [subject, setSubject] = useState<Subject | "all">(preset === "tax-diagnostic" ? "tax" : "portfolio");
+  const [subject, setSubject] = useState<Subject | "all">(preset === "tax-diagnostic" ? "tax" : initialSubject);
   const [diagnostic, setDiagnostic] = useState(preset === "tax-diagnostic");
   const [session, setSession] = useState<QuizQuestion[]>([]);
   const [sessionResults, setSessionResults] = useState<AnswerRecord[]>([]);
@@ -583,7 +618,22 @@ function Quiz({ setProgress, preset, onPresetApplied }: { setProgress: React.Dis
     if (!question || answer === undefined) return;
     const correct = isCorrect(question, answer);
     const record: AnswerRecord = { id: uid("answer"), questionId: question.id, subject: question.subject, topic: question.topic, correct, durationMs: Date.now() - started.current, confidence, errorType: correct ? undefined : errorType, answeredAt: new Date().toISOString() };
-    setProgress((current) => addAnswer(current, record));
+    setProgress((current) => addLearningAttempt(addAnswer(current, record), {
+      id: `answer-${record.id}`,
+      activityId: question.id,
+      variantId: question.id,
+      subject: question.subject,
+      topic: question.topic,
+      mode: "quiz",
+      stage: question.type === "calculation" || question.type === "legal-rule" ? "application" : "recall",
+      score: correct ? question.points : 0,
+      maxScore: question.points,
+      durationMs: record.durationMs,
+      confidence,
+      errorTypes: correct ? [] : [errorType],
+      hintsUsed: 0,
+      completedAt: record.answeredAt,
+    }));
     setSessionResults((current) => [...current, record]);
     setChecked(true);
   };
@@ -657,7 +707,14 @@ function SubjectTrainer({ progress, setProgress, onStartTaxDiagnostic }: { progr
   const check = () => {
     if (!question || answer === undefined) return;
     const correct = isCorrect(question, answer);
-    setProgress((current) => addAnswer(current, { id: uid("trainer"), questionId: question.id, subject: question.subject, topic: question.topic, correct, durationMs: Date.now() - started.current, confidence, errorType: correct ? undefined : mode === "calculation" ? "Rechenfehler" : mode === "tax-case" ? "Rechtsfolge falsch" : question.subject === "tax" ? "Norm nicht gefunden" : "falsche Formel", answeredAt: new Date().toISOString() }));
+    const errorType: ErrorType = mode === "calculation" ? "Rechenfehler" : mode === "tax-case" ? "Rechtsfolge falsch" : question.subject === "tax" ? "Norm nicht gefunden" : "falsche Formel";
+    const record: AnswerRecord = { id: uid("trainer"), questionId: question.id, subject: question.subject, topic: question.topic, correct, durationMs: Date.now() - started.current, confidence, errorType: correct ? undefined : errorType, answeredAt: new Date().toISOString() };
+    setProgress((current) => addLearningAttempt(addAnswer(current, record), {
+      id: `answer-${record.id}`, activityId: question.id, variantId: question.id,
+      subject: question.subject, topic: question.topic, mode: "quiz", stage: "application",
+      score: correct ? question.points : 0, maxScore: question.points, durationMs: record.durationMs,
+      confidence, errorTypes: correct ? [] : [errorType], hintsUsed: 0, completedAt: record.answeredAt,
+    }));
     setChecked(true);
   };
   const next = () => { setIndex((value) => (value + 1) % Math.max(1, questions.length)); setAnswer(undefined); setChecked(false); setConfidence("medium"); started.current = Date.now(); };
@@ -667,14 +724,27 @@ function SubjectTrainer({ progress, setProgress, onStartTaxDiagnostic }: { progr
 
   if (mode === "lab" && labTasks[labIndex]) return <CalculationLab task={labTasks[labIndex]} position={labIndex} total={labTasks.length} confidence={confidence} setConfidence={setConfidence} onExit={() => setMode(undefined)} onComplete={(errors) => {
     const task = labTasks[labIndex]; const correct = errors.length === 0;
-    setProgress((current) => addAnswer(current, { id: uid("lab"), questionId: `lab-${task.id}-${Date.now()}`, subject: "portfolio", topic: task.topic, correct, durationMs: Date.now() - labStarted.current, confidence, errorType: correct ? undefined : labErrorByStage[errors[0]], answeredAt: new Date().toISOString() }));
+    const record: AnswerRecord = { id: uid("lab"), questionId: `lab-${task.id}-${Date.now()}`, subject: "portfolio", topic: task.topic, correct, durationMs: Date.now() - labStarted.current, confidence, errorType: correct ? undefined : labErrorByStage[errors[0]], answeredAt: new Date().toISOString() };
+    setProgress((current) => addLearningAttempt(addAnswer(current, record), {
+      id: `answer-${record.id}`, activityId: task.id, variantId: record.questionId,
+      subject: "portfolio", topic: task.topic, mode: "calculation-lab", stage: "transfer",
+      score: Math.max(0, 5 - errors.length), maxScore: 5, durationMs: record.durationMs,
+      confidence, errorTypes: correct ? [] : [record.errorType!], hintsUsed: 0, completedAt: record.answeredAt,
+    }));
     setLabTasks((current) => correct ? current : [...current, createLabTasks(Date.now()+labIndex).find((item) => item.id === task.id)!]);
     setLabIndex((value) => value + 1); setConfidence("medium"); labStarted.current = Date.now();
   }} />;
 
   if (mode === "tax-lab" && taxLabCases[taxLabIndex]) return <TaxCaseLab taxCase={taxLabCases[taxLabIndex]} position={taxLabIndex} total={taxLabCases.length} confidence={confidence} setConfidence={setConfidence} onExit={() => setMode(undefined)} onComplete={(score, firstError) => {
     const item = taxLabCases[taxLabIndex]; const correct = score === item.steps.reduce((sum, step) => sum + step.points, 0);
-    setProgress((current) => addAnswer(current, { id: uid("tax-lab"), questionId: `tax-lab-${item.id}-${Date.now()}`, subject: "tax", topic: item.topic, correct, durationMs: Date.now() - labStarted.current, confidence, errorType: firstError ? taxCaseErrorByStep[firstError] : undefined, answeredAt: new Date().toISOString() }));
+    const record: AnswerRecord = { id: uid("tax-lab"), questionId: `tax-lab-${item.id}-${Date.now()}`, subject: "tax", topic: item.topic, correct, durationMs: Date.now() - labStarted.current, confidence, errorType: firstError ? taxCaseErrorByStep[firstError] : undefined, answeredAt: new Date().toISOString() };
+    const maxScore = item.steps.reduce((sum, step) => sum + step.points, 0);
+    setProgress((current) => addLearningAttempt(addAnswer(current, record), {
+      id: `answer-${record.id}`, activityId: item.id, variantId: record.questionId,
+      subject: "tax", topic: item.topic, mode: "tax-case", stage: "transfer",
+      score, maxScore, durationMs: record.durationMs, confidence,
+      errorTypes: record.errorType ? [record.errorType] : [], hintsUsed: 0, completedAt: record.answeredAt,
+    }));
     setTaxLabCases((current) => correct ? current : [...current, item]);
     setTaxLabIndex((value) => value + 1); setConfidence("medium"); labStarted.current = Date.now();
   }} />;
@@ -886,14 +956,43 @@ function CalculationLab({ task, position, total, confidence, setConfidence, onEx
 function ErrorBook({ progress, navigate }: { progress: AppProgress; navigate: (view: View) => void }) {
   const latestBySkill = new Map<string, AnswerRecord>();
   [...progress.answers].reverse().forEach((item) => { const key=`${item.subject}:${item.topic}:${item.errorType??item.questionId}`; if (!latestBySkill.has(key)) latestBySkill.set(key, item); });
-  const errors = [...latestBySkill.values()].filter((item) => !item.correct).map((answer) => ({ answer, question: quizQuestions.find((item) => item.id === answer.questionId) }));
-  const errorCounts = errorTypes.map((type) => ({ type, count: errors.filter((item) => item.answer.errorType === type).length })).filter((item) => item.count);
+  const openRepairs = (progress.repairs ?? []).filter((item) => item.status === "open").sort((a, b) => a.dueAt.localeCompare(b.dueAt));
+  const legacyErrors = [...latestBySkill.values()]
+    .filter((item) => !item.correct && !openRepairs.some((repair) => repair.subject === item.subject && repair.topic === item.topic))
+    .map((answer) => ({ answer, question: quizQuestions.find((item) => item.id === answer.questionId) }));
+  const repairItems = openRepairs.map((repair) => {
+    const attempt = (progress.attempts ?? []).find((item) => item.id === repair.sourceAttemptId);
+    return {
+      key: repair.id,
+      subject: repair.subject,
+      topic: repair.topic,
+      errorType: repair.errorType,
+      confidence: attempt?.confidence,
+      prompt: repair.prompt,
+      explanation: "Der Fehler bleibt offen, bis du eine neue Variante in Anwendung oder Transfer mit mindestens 70 % löst.",
+      date: attempt?.completedAt ?? repair.dueAt,
+      source: quizQuestions.find((item) => item.id === attempt?.activityId)?.source,
+    };
+  });
   const repairPrompt=(answer:AnswerRecord)=> answer.subject==="portfolio" ? `Löse eine neue Zahlenvariante zu „${answer.topic}“. Kontrolliere besonders: ${answer.errorType??"vollständiger Rechenweg"}.` : `Prüfe einen neuen Sachverhalt zu „${answer.topic}“ mit Problem → Norm → Subsumtion/Rechnung → Ergebnis. Fokus: ${answer.errorType??"Normkette"}.`;
+  const legacyItems = legacyErrors.map(({ answer, question }) => ({
+    key: `${answer.subject}-${answer.topic}-${answer.errorType ?? answer.questionId}`,
+    subject: answer.subject,
+    topic: answer.topic,
+    errorType: answer.errorType ?? "Wissenslücke" as ErrorType,
+    confidence: answer.confidence,
+    prompt: repairPrompt(answer),
+    explanation: question?.explanation ?? `${answer.errorType??"Der Lösungsweg"} war in der letzten Anwendung noch nicht sicher.`,
+    date: answer.answeredAt,
+    source: question?.source,
+  }));
+  const items = [...repairItems, ...legacyItems];
+  const errorCounts = errorTypes.map((type) => ({ type, count: items.filter((item) => item.errorType === type).length })).filter((item) => item.count);
   return <section className="page"><PageHeading eyebrow="AUTOMATISCHE FEHLERKARTEN" title="Dein Fehlerbuch" description="Jeder offene Fehler wird als neue Transferaufgabe formuliert. So trainierst du die Ursache und lernst nicht nur die alte Antwort auswendig." />
-    <div className="error-summary"><article className="panel"><strong>{errors.length}</strong><span>offene Fehler</span></article><article className="panel"><strong>{errors.filter((item) => item.answer.confidence === "high").length}</strong><span>Scheinsicherheiten</span></article><article className="panel"><strong>{errors.length}</strong><span>zur Wiedervorlage</span></article></div>
+    <div className="error-summary"><article className="panel"><strong>{items.length}</strong><span>offene Fehler</span></article><article className="panel"><strong>{items.filter((item) => item.confidence === "high").length}</strong><span>Scheinsicherheiten</span></article><article className="panel"><strong>{openRepairs.length}</strong><span>aktive Reparaturen</span></article></div>
     {errorCounts.length > 0 && <div className="error-chips">{errorCounts.map((item) => <span key={item.type}>{item.type} <b>{item.count}</b></span>)}</div>}
-    {errors.length ? <div className="review-list">{errors.map(({ answer, question }) => <article className="review-item wrong" key={`${answer.subject}-${answer.topic}-${answer.errorType}`}><div><span>{answer.confidence === "high" ? "Scheinsicherheit" : "Wiederholen"}</span><strong>{subjectName[answer.subject]} · {answer.topic}</strong><b>{answer.errorType ?? "Wissenslücke"}</b></div><h3>{repairPrompt(answer)}</h3><p><b>Fehlerursache:</b> {question?.explanation ?? `${answer.errorType??"Der Lösungsweg"} war in der letzten Anwendung noch nicht sicher.`}</p><small>Neu einzuplanen · letzter Fehler am {new Date(answer.answeredAt).toLocaleDateString("de-DE")}</small>{question&&<SourceBadge source={question.source} />}</article>)}</div> : <EmptyState>Noch keine offenen Fehler. Löse einen Diagnosetest oder eine Prüfung, damit das Fehlerbuch gezielt arbeiten kann.</EmptyState>}
-    <button className="primary-button error-cta" onClick={() => navigate(errors[0]?.answer.subject === "portfolio" ? "trainer" : "quiz")}>{errors.length ? "Transferaufgabe starten" : "Diagnosetest starten"} →</button>
+    {items.length ? <div className="review-list">{items.map((item) => <article className="review-item wrong" key={item.key}><div><span>{item.confidence === "high" ? "Scheinsicherheit" : "Wiederholen"}</span><strong>{subjectName[item.subject]} · {item.topic}</strong><b>{item.errorType}</b></div><h3>{item.prompt}</h3><p><b>Reparaturregel:</b> {item.explanation}</p><small>Neu einzuplanen · letzter Fehler am {new Date(item.date).toLocaleDateString("de-DE")}</small>{item.source&&<SourceBadge source={item.source} />}</article>)}</div> : <EmptyState>Noch keine offenen Fehler. Löse einen Diagnosetest oder eine Prüfung, damit das Fehlerbuch gezielt arbeiten kann.</EmptyState>}
+    <button className="primary-button error-cta" onClick={() => navigate(items[0]?.subject === "portfolio" ? "trainer" : "quiz")}>{items.length ? "Transferaufgabe starten" : "Diagnosetest starten"} →</button>
   </section>;
 }
 
@@ -989,85 +1088,6 @@ function Videos() {
       </div>
     </section>
   );
-}
-
-function Exam({ progress, setProgress }: { progress: AppProgress; setProgress: React.Dispatch<React.SetStateAction<AppProgress>> }) {
-  const [subject, setSubject] = useState<Subject>("portfolio");
-  const [exam, setExam] = useState<ExamSession>();
-  const [index, setIndex] = useState(0);
-  const [seconds, setSeconds] = useState(90 * 60);
-  const [finished, setFinished] = useState(false);
-  const [wrongFilter, setWrongFilter] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const incomplete = [...progress.exams].reverse().find((item) => !item.completedAt);
-
-  const examQuestions = useMemo(() => exam ? exam.questionIds.map((id) => quizQuestions.find((item) => item.id === id)).filter(Boolean) as QuizQuestion[] : [], [exam]);
-  const current = examQuestions[index];
-  const results = useMemo(() => examQuestions.map((question) => ({ question, correct: isCorrect(question, exam?.answers[question.id]) })), [exam?.answers, examQuestions]);
-  const score = useMemo(() => results.filter((item) => item.correct).reduce((sum, item) => sum + item.question.points, 0), [results]);
-  const maxScore = useMemo(() => results.reduce((sum, item) => sum + item.question.points, 0), [results]);
-
-  const completeExam = useCallback(() => {
-    if (!exam || exam.completedAt) return;
-    const completed = { ...exam, completedAt: new Date().toISOString(), score, maxScore };
-    setExam(completed);
-    setFinished(true);
-    setProgress((currentProgress) => {
-      let next = upsertExam(currentProgress, completed);
-      results.forEach(({ question, correct }) => {
-        next = addAnswer(next, { id: uid("exam-answer"), questionId: question.id, subject: question.subject, topic: question.topic, correct, durationMs: Math.round((Date.now() - new Date(exam.startedAt).getTime()) / Math.max(1, results.length)), confidence: exam.confidences[question.id] ?? "medium", errorType: correct ? undefined : "Wissenslücke", answeredAt: new Date().toISOString(), examSessionId: completed.id });
-      });
-      return next;
-    });
-  }, [exam, maxScore, results, score, setProgress]);
-
-  useEffect(() => {
-    if (!exam || finished) return;
-    timerRef.current = setInterval(() => {
-      const remaining = Math.max(0, Math.ceil((new Date(exam.startedAt).getTime() + 90 * 60 * 1000 - Date.now()) / 1000));
-      setSeconds(remaining);
-      if (remaining === 0) completeExam();
-    }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [completeExam, exam, finished]);
-
-  const startExam = () => {
-    const pool = quizQuestions.filter((item) => item.subject === subject);
-    const selected = pickQuestionsForPoints(pool, 90);
-    const created: ExamSession = { id: uid("exam"), subject, startedAt: new Date().toISOString(), questionIds: selected.map((item) => item.id), answers: {}, confidences: {} };
-    setExam(created); setProgress((current) => upsertExam(current, created));
-    setIndex(0); setSeconds(90 * 60); setFinished(false); setWrongFilter(false);
-  };
-  const resumeExam = () => { if (!incomplete) return; setSubject(incomplete.subject); setExam(incomplete); setIndex(Math.max(0, incomplete.questionIds.findIndex((id) => incomplete.answers[id] === undefined))); setFinished(false); };
-  const answer = (value: number) => { if (!exam || !current) return; const changed = { ...exam, answers: { ...exam.answers, [current.id]: value } }; setExam(changed); setProgress((progressNow) => upsertExam(progressNow, changed)); };
-  const setExamConfidence = (value: Confidence) => { if (!exam || !current) return; const changed = { ...exam, confidences: { ...exam.confidences, [current.id]: value } }; setExam(changed); setProgress((progressNow) => upsertExam(progressNow, changed)); };
-
-  if (!exam) return <section className="page"><PageHeading eyebrow="90 MINUTEN · OHNE SOFORTLÖSUNG" title="Prüfungsmodus" description="Gemischte Aufgaben, Punkteverteilung und Auswertung erst nach Abgabe." />
-    <div className="exam-setup"><div className="exam-clock">90:00<small>Minuten</small></div><div><h2>Prüfung wählen</h2><div className="subject-tabs"><button className={subject === "portfolio" ? "active" : ""} onClick={() => setSubject("portfolio")}>Portfolio Management</button><button className={subject === "tax" ? "active" : ""} onClick={() => setSubject("tax")}>Taxation</button></div><ul><li>Fragen zufällig gemischt</li><li>Automatische Zwischenspeicherung</li><li>Keine Lösung während der Bearbeitung</li><li>Falsche Fragen anschließend wiederholen</li></ul>{incomplete && <button className="resume-button" onClick={resumeExam}>Offene {subjectName[incomplete.subject]}-Prüfung fortsetzen →</button>}<button className="primary-button" onClick={startExam}>Neue 90-Minuten-Prüfung starten →</button></div></div>
-  </section>;
-
-  if (finished) {
-    const shown = wrongFilter ? results.filter((item) => !item.correct) : results;
-    const topics = Object.entries(results.reduce<Record<string, { correct: number; total: number }>>((acc, item) => { acc[item.question.topic] ??= { correct: 0, total: 0 }; acc[item.question.topic].total += 1; if (item.correct) acc[item.question.topic].correct += 1; return acc; }, {}));
-    const wrongQuestions = results.filter((item) => !item.correct).map((item) => item.question);
-    const repeatWrong = () => {
-      if (!wrongQuestions.length) return;
-      setExam({ id: uid("repeat"), subject, startedAt: new Date().toISOString(), questionIds: wrongQuestions.map((item) => item.id), answers: {}, confidences: {} });
-      setIndex(0); setSeconds(90 * 60); setFinished(false); setWrongFilter(false);
-    };
-    const setStoredError = (questionId: string, value: ErrorType) => {
-      if (!exam) return;
-      setProgress((currentProgress) => ({ ...currentProgress, answers: currentProgress.answers.map((item) => item.examSessionId === exam.id && item.questionId === questionId ? { ...item, errorType: value } : item) }));
-    };
-    return <section className="page"><PageHeading eyebrow="PRÜFUNG ABGEGEBEN" title={`${score} / ${maxScore} Punkte`} description={`${pct(score, maxScore)}% · ${results.filter((item) => item.correct).length} von ${results.length} Aufgaben richtig`} />
-      <div className="result-grid"><article className="panel"><h2>Themenanalyse</h2>{topics.map(([topic, value]) => <div className="result-topic" key={topic}><span>{topic}</span><strong>{value.correct}/{value.total}</strong><div><span style={{ width: `${pct(value.correct, value.total)}%` }} /></div></div>)}</article><article className="panel"><h2>Fehlerprotokoll</h2><p>{wrongQuestions.length} Fragen gezielt nacharbeiten.</p><button className="primary-button" disabled={!wrongQuestions.length} onClick={repeatWrong}>Falsche Fragen wiederholen →</button><button className="secondary-button" onClick={() => setWrongFilter((value) => !value)}>{wrongFilter ? "Alle Fragen anzeigen" : "Nur falsche Fragen anzeigen"}</button><button className="secondary-button" onClick={() => { setExam(undefined); setFinished(false); }}>Neue Prüfung</button></article></div>
-      <div className="review-list">{shown.map(({ question, correct }) => { const stored = progress.answers.find((item) => item.examSessionId === exam?.id && item.questionId === question.id); return <article key={question.id} className={correct ? "review-item correct" : "review-item wrong"}><div><span>{correct ? "Richtig" : "Falsch"}</span><strong>{question.topic}</strong><b>{question.points} P</b></div><h3>{question.prompt}</h3><p>{question.explanation}</p>{!correct && <label className="error-select">Fehlerart<select value={stored?.errorType ?? "Wissenslücke"} onChange={(event) => setStoredError(question.id, event.target.value as ErrorType)}>{errorTypes.map((item) => <option key={item}>{item}</option>)}</select></label>}<SourceBadge source={question.source} /></article>; })}</div>
-    </section>;
-  }
-
-  return <section className="page exam-page"><div className="exam-bar"><strong>{String(Math.floor(seconds / 60)).padStart(2, "0")}:{String(seconds % 60).padStart(2, "0")}</strong><span>Aufgabe {index + 1} / {examQuestions.length}</span><button className="danger-button" onClick={completeExam}>Prüfung abgeben</button></div>
-    {current && <article className="question-card exam-question"><div className="quiz-top"><span>{current.topic}</span><strong>{current.points} Punkte</strong></div><h1>{current.prompt}</h1><div className="options">{current.options.map((option, optionIndex) => <button key={option} className={!Array.isArray(exam.answers[current.id]) && exam.answers[current.id] === optionIndex ? "selected" : ""} onClick={() => answer(optionIndex)}><span>{String.fromCharCode(65 + optionIndex)}</span>{option}</button>)}</div><label className="exam-confidence">Subjektive Sicherheit<select value={exam.confidences[current.id] ?? "medium"} onChange={(event) => setExamConfidence(event.target.value as Confidence)}><option value="low">niedrig</option><option value="medium">mittel</option><option value="high">hoch</option></select></label><div className="exam-nav"><button className="secondary-button" disabled={index === 0} onClick={() => setIndex((value) => value - 1)}>← Zurück</button><div className="question-dots">{examQuestions.map((item, dotIndex) => <button aria-label={`Aufgabe ${dotIndex + 1}`} key={item.id} onClick={() => setIndex(dotIndex)} className={`${dotIndex === index ? "active" : ""} ${exam.answers[item.id] !== undefined ? "answered" : ""}`}>{dotIndex + 1}</button>)}</div><button className="primary-button" disabled={index === examQuestions.length - 1} onClick={() => setIndex((value) => value + 1)}>Weiter →</button></div></article>}
-  </section>;
 }
 
 function PageHeading({ eyebrow, title, description }: { eyebrow: string; title: string; description: string }) {

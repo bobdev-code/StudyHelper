@@ -4,7 +4,7 @@ export type Language = "de" | "en";
 export type SourceRef = {
   document: string;
   location: string;
-  priority: "official-current" | "official-solution" | "official-older";
+  priority: "official-current" | "official-solution" | "official-older" | "student-secondary";
   note?: string;
 };
 
@@ -90,14 +90,58 @@ export type AnswerRecord = {
   examSessionId?: string;
 };
 
+export type LearningMode =
+  | "flashcard"
+  | "quiz"
+  | "calculation-lab"
+  | "tax-case"
+  | "portfolio-chain"
+  | "portfolio-detective"
+  | "exam";
+
+export type LearningStage = "recall" | "application" | "transfer" | "timed";
+
+export type LearningAttempt = {
+  id: string;
+  activityId: string;
+  variantId: string;
+  subject: Subject;
+  topic: string;
+  mode: LearningMode;
+  stage: LearningStage;
+  score: number;
+  maxScore: number;
+  durationMs: number;
+  confidence: Confidence;
+  errorTypes: ErrorType[];
+  hintsUsed: number;
+  completedAt: string;
+  examSessionId?: string;
+};
+
+export type RepairTask = {
+  id: string;
+  sourceAttemptId: string;
+  subject: Subject;
+  topic: string;
+  errorType: ErrorType;
+  prompt: string;
+  dueAt: string;
+  status: "open" | "passed";
+  passedAt?: string;
+};
+
 export type ExamSession = {
   id: string;
   subject: Subject;
   startedAt: string;
   completedAt?: string;
   questionIds: string[];
-  answers: Record<string, number | number[]>;
+  answers: Record<string, number | number[] | string>;
   confidences: Record<string, Confidence>;
+  markedQuestionIds?: string[];
+  scratchpads?: Record<string, string>;
+  selfScores?: Record<string, number>;
   score?: number;
   maxScore?: number;
 };
@@ -106,6 +150,8 @@ export type AppProgress = {
   version: 1;
   cards: Record<string, CardProgress>;
   answers: AnswerRecord[];
+  attempts?: LearningAttempt[];
+  repairs?: RepairTask[];
   exams: ExamSession[];
   portfolioAttempts?: PortfolioAttempt[];
   settings: {

@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { createChainTasks, detectiveCases, formulaNodes } from "@/lib/data/advancedPortfolio";
 import type { AppProgress, PortfolioAttempt } from "@/lib/types";
+import { addLearningAttempt } from "@/lib/storage";
 
 type Area = "home"|"chains"|"decision"|"network"|"simulator"|"detective"|"mastery";
 
@@ -16,7 +17,33 @@ const parseNumber = (raw: string, expectedUnit: string) => {
 };
 
 function logAttempt(setProgress: React.Dispatch<React.SetStateAction<AppProgress>>, attempt: Omit<PortfolioAttempt,"id"|"completedAt">) {
-  setProgress(current=>({...current,portfolioAttempts:[...(current.portfolioAttempts??[]),{...attempt,id:`pa-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,completedAt:new Date().toISOString()}].slice(-500)}));
+  const id = `pa-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
+  const completedAt = new Date().toISOString();
+  const portfolioAttempt = { ...attempt, id, completedAt };
+  const errorTypes = attempt.errorTypes.map((item) =>
+    item.toLowerCase().includes("interpret") ? "Interpretation fehlt" as const
+      : item.toLowerCase().includes("rechen") || item.toLowerCase().includes("einheit") ? "Rechenfehler" as const
+        : "falsche Formel" as const
+  );
+  setProgress(current=>addLearningAttempt(
+    { ...current, portfolioAttempts:[...(current.portfolioAttempts??[]), portfolioAttempt].slice(-500) },
+    {
+      id: `attempt-${id}`,
+      activityId: attempt.taskId,
+      variantId: `${attempt.taskId}-${completedAt}`,
+      subject: "portfolio",
+      topic: attempt.topic,
+      mode: attempt.mode === "detective" ? "portfolio-detective" : "portfolio-chain",
+      stage: attempt.mode === "chain" || attempt.mode === "challenge" ? "transfer" : "application",
+      score: attempt.score,
+      maxScore: attempt.maxScore,
+      durationMs: 0,
+      confidence: "medium",
+      errorTypes,
+      hintsUsed: 0,
+      completedAt,
+    },
+  ));
 }
 
 export function PortfolioAcademy({progress,setProgress,onExit}:{progress:AppProgress;setProgress:React.Dispatch<React.SetStateAction<AppProgress>>;onExit:()=>void}) {
@@ -101,4 +128,3 @@ function Mastery({attempts,setProgress,onBack}:{attempts:PortfolioAttempt[];setP
  <div className="mastery-layout"><article className="panel challenge"><span>TAGES-CHALLENGE</span><h2>{challenge.prompt}</h2><p>Unbekannter Aufgabentyp · {challenge.totalPoints} Punkte · Zielzeit 12 Minuten</p><button className="primary-button" onClick={()=>logAttempt(setProgress,{taskId:challenge.id,topic:challenge.topic,mode:"challenge",score:0,maxScore:challenge.totalPoints,errorTypes:["Challenge gestartet"]})}>Challenge in Aufgabenketten vormerken</button></article><article className="panel"><h2>Häufigste Rechenmuster</h2>{errors.length?errors.slice(0,6).map(([e,n])=><div className="error-bar" key={e}><span>{e}</span><div><i style={{width:`${Math.min(100,n/(errors[0][1] as number)*100)}%`}}/></div><b>{n}×</b></div>):<p>Noch kein Fehlerprofil. Löse eine Aufgabenkette oder einen Fehlerdetektiv.</p>}</article></div>
  <div className="mastery-grid">{topics.map(t=><article key={t.topic} className={t.mastered?"mastered":""}><span>{t.mastered?"BEHERRSCHT":t.attempts?"IM AUFBAU":"NEU"}</span><h3>{t.topic}</h3><div className="progress-track"><i style={{width:`${t.accuracy}%`}}/></div><p>{t.accuracy}% · {t.attempts} Versuche · {t.days} Lerntage</p></article>)}</div></section>;
 }
-
