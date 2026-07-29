@@ -3,14 +3,22 @@
 import { useState } from "react";
 import { calculateExpression, formatCalculatorResult } from "@/lib/calculator";
 import { portfolioFormulaGroups } from "@/lib/data/examAids";
-import type { Language, Subject } from "@/lib/types";
+import { upsertTaxDiagram } from "@/lib/storage";
+import type {
+  AppProgress,
+  Language,
+  SavedTaxDiagram,
+  Subject,
+  TaxDiagramEdge,
+  TaxDiagramNode,
+} from "@/lib/types";
 
 const tr = (language: Language, de: string, en: string) => language === "de" ? de : en;
 
-type DiagramNodeKind = "person" | "partnership" | "corporation" | "building";
-type DiagramRelation = "participation" | "rental" | "loan" | "dividend";
-type DiagramNode = { id: number; kind: DiagramNodeKind; x: number; y: number; label: string };
-type DiagramEdge = { id: number; from: number; to: number; relation: DiagramRelation };
+type DiagramNodeKind = TaxDiagramNode["kind"];
+type DiagramRelation = TaxDiagramEdge["relation"];
+type DiagramNode = TaxDiagramNode;
+type DiagramEdge = TaxDiagramEdge;
 
 const nodeLabels: Record<DiagramNodeKind, { de: string; en: string }> = {
   person: { de: "Person", en: "Individual" },
@@ -158,11 +166,21 @@ function DiagramNodeShape({ node, selected, onSelect }: { node: DiagramNode; sel
   </g>;
 }
 
-function TaxDiagramBuilder({ language }: { language: Language }) {
+function TaxDiagramBuilder({
+  language,
+  savedDiagrams,
+  onSave,
+}: {
+  language: Language;
+  savedDiagrams: SavedTaxDiagram[];
+  onSave?: (diagram: SavedTaxDiagram) => void;
+}) {
   const [nodes, setNodes] = useState<DiagramNode[]>([]);
   const [edges, setEdges] = useState<DiagramEdge[]>([]);
   const [selected, setSelected] = useState<number[]>([]);
   const [relation, setRelation] = useState<DiagramRelation>("participation");
+  const [diagramName, setDiagramName] = useState("");
+  const [activeDiagramId, setActiveDiagramId] = useState<string>();
 
   const addNode = (kind: DiagramNodeKind) => {
     const id = Math.max(0, ...nodes.map((item) => item.id)) + 1;
@@ -189,8 +207,35 @@ function TaxDiagramBuilder({ language }: { language: Language }) {
     setEdges((current) => current.filter((item) => !selectedSet.has(item.from) && !selectedSet.has(item.to)));
     setSelected([]);
   };
+  const loadSaved = (id: string) => {
+    const saved = savedDiagrams.find((item) => item.id === id);
+    if (!saved) return;
+    setActiveDiagramId(saved.id);
+    setDiagramName(saved.name);
+    setNodes(saved.nodes);
+    setEdges(saved.edges);
+    setSelected([]);
+  };
+  const saveDiagram = () => {
+    const name = diagramName.trim();
+    if (!name || !nodes.length || !onSave) return;
+    const diagram: SavedTaxDiagram = {
+      id: activeDiagramId ?? `tax-diagram-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      name,
+      nodes,
+      edges,
+      updatedAt: new Date().toISOString(),
+    };
+    onSave(diagram);
+    setActiveDiagramId(diagram.id);
+  };
 
   return <div className="tax-diagram-builder">
+    <div className="diagram-savebar">
+      <label><span>{tr(language, "Zeichnung benennen", "Name drawing")}</span><input value={diagramName} onChange={(event) => setDiagramName(event.target.value)} placeholder={tr(language, "z. B. Betriebsaufspaltung Fall 2", "e.g. Business split case 2")} /></label>
+      <button className="primary-button compact" disabled={!onSave || !diagramName.trim() || !nodes.length} onClick={saveDiagram}>{activeDiagramId ? tr(language, "Änderungen speichern", "Save changes") : tr(language, "Zeichnung speichern", "Save drawing")}</button>
+      {savedDiagrams.length > 0 && <label><span>{tr(language, "Gespeicherte Zeichnung laden", "Load saved drawing")}</span><select value={activeDiagramId ?? ""} onChange={(event) => loadSaved(event.target.value)}><option value="">{tr(language, "Auswählen …", "Choose …")}</option>{savedDiagrams.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
+    </div>
     <div className="diagram-toolbar">
       <div><small>{tr(language, "Bausteine", "Building blocks")}</small>{(["person", "partnership", "corporation", "building"] as DiagramNodeKind[]).map((kind) => <button key={kind} onClick={() => addNode(kind)}>+ {tr(language, nodeLabels[kind].de, nodeLabels[kind].en)}</button>)}</div>
       <div><small>{tr(language, "Vorlagen", "Templates")}</small><button onClick={() => loadTemplate("partnership")}>{tr(language, "Mitunternehmerschaft", "Co-entrepreneurship")}</button><button onClick={() => loadTemplate("businessSplit")}>{tr(language, "Betriebsaufspaltung", "Business split")}</button><button onClick={() => loadTemplate("intercompany")}>Intercompany</button><button onClick={() => loadTemplate("privateEquity")}>Private Equity</button></div>
@@ -213,7 +258,7 @@ function TaxDiagramBuilder({ language }: { language: Language }) {
       {nodes.map((node) => <DiagramNodeShape key={node.id} node={node} selected={selected.includes(node.id)} onSelect={() => toggleNode(node.id)} />)}
       {!nodes.length && <text className="diagram-empty" x="320" y="170" textAnchor="middle">{tr(language, "Vorlage wählen oder Symbole hinzufügen", "Choose a template or add symbols")}</text>}
     </svg>
-    <p>{tr(language, "Wähle zwei Symbole nacheinander und verbinde sie. Die Vorlagen bilden die in der Exam-Prep-Datei gezeigten Grundstrukturen nach.", "Select two symbols in sequence and connect them. Templates reproduce the core structures shown in the exam-prep material.")}</p>
+    <p>{tr(language, "Wähle zwei Symbole nacheinander und verbinde sie. Gespeicherte Zeichnungen bleiben nach Reload und Login erhalten, werden aber bewusst nicht automatisch bewertet.", "Select two symbols in sequence and connect them. Saved drawings persist across reload and login, but are deliberately not auto-graded.")}</p>
     <small className="aid-source">Quelle: German and International Taxation.zip → Copy of German Tax Exam Prep.pdf, S. 1, 4–6.</small>
   </div>;
 }
@@ -238,7 +283,17 @@ function TaxBurdenSimulator({ language }: { language: Language }) {
   </div>;
 }
 
-export function ExamAidPanel({ subject, language }: { subject: Subject; language: Language }) {
+export function ExamAidPanel({
+  subject,
+  language,
+  progress,
+  setProgress,
+}: {
+  subject: Subject;
+  language: Language;
+  progress?: AppProgress;
+  setProgress?: React.Dispatch<React.SetStateAction<AppProgress>>;
+}) {
   const [tool, setTool] = useState(subject === "portfolio" ? "formula" : "diagram");
   return <details className={`exam-aid-panel ${subject}`}>
     <summary><span>{subject === "portfolio" ? "ƒx" : "◇"}</span><div><b>{tr(language, "Prüfungshilfen", "Exam aids")}</b><small>{subject === "portfolio" ? tr(language, "Formelsammlung & Taschenrechner", "Formula sheet & calculator") : tr(language, "Zeichenbausteine & Belastungsdiagramm", "Diagram blocks & burden chart")}</small></div></summary>
@@ -254,7 +309,7 @@ export function ExamAidPanel({ subject, language }: { subject: Subject; language
       </div>
       {tool === "formula" && <FormulaSheet language={language} />}
       {tool === "calculator" && <Calculator language={language} />}
-      {tool === "diagram" && <TaxDiagramBuilder language={language} />}
+      {subject === "tax" && <div hidden={tool !== "diagram"}><TaxDiagramBuilder language={language} savedDiagrams={progress?.taxDiagrams ?? []} onSave={setProgress ? (diagram) => setProgress((current) => upsertTaxDiagram(current, diagram)) : undefined} /></div>}
       {tool === "burden" && <TaxBurdenSimulator language={language} />}
     </div>
   </details>;

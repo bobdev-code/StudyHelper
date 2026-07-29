@@ -275,3 +275,65 @@ h1,h2,h3,p { margin-top: 0; }
   .exam-mode-groups,.exam-subject-cards,.exam-readiness,.difficulty-panel { grid-template-columns:1fr; }.tax-exam-cards { grid-template-columns:1fr !important; }.tax-exam-cards button:last-child { grid-column:auto; }.exam-readiness { padding:22px 17px; }.exam-block-tools { align-items:flex-start; flex-direction:column; }.exam-answer-field textarea { min-height:260px; }
   .quiz-topic-filter,.diagram-toolbar,.burden-controls,.burden-chart { grid-template-columns:1fr; }.quiz-topic-filter small { grid-column:1; }.exam-aid-body { padding:0 10px 12px; }.formula-aid-list article { grid-template-columns:28px minmax(0,1fr); }.formula-aid-list article>small { grid-column:2; }.tax-diagram-canvas { min-height:260px; }.writing-self-score { grid-template-columns:1fr; }.written-answer-actions { align-items:stretch; flex-direction:column; }.written-answer-actions .secondary-button { width:100%; }
 }
+
+.study-session-banner {
+  width:min(1240px,calc(100% - 64px));
+  display:grid;
+  grid-template-columns:minmax(220px,1fr) minmax(220px,.8fr) auto;
+  gap:18px;
+  align-items:center;
+  margin:16px auto -20px;
+  padding:14px 16px;
+  border:1px solid #a8d8c8;
+  border-radius:14px;
+  background:linear-gradient(120deg,#f1fbf7,#fffdf8);
+  box-shadow:0 9px 25px rgba(19,84,68,.08);
+}
+.study-session-banner>div:first-child { display:flex; align-items:center; gap:11px; min-width:0; }
+.study-session-banner>div:first-child>span { width:38px; height:38px; display:grid; place-items:center; flex:0 0 auto; border-radius:10px; background:var(--mint); color:white; font-weight:900; }
+.study-session-banner small,.study-session-banner strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.study-session-banner small { color:#25745f; font-size:9px; font-weight:900; letter-spacing:.1em; }
+.study-session-banner strong { margin-top:3px; }
+.session-banner-progress { display:grid; gap:5px; }
+.session-banner-progress i { height:7px; overflow:hidden; border-radius:99px; background:#dfe9e5; }
+.session-banner-progress i b { display:block; height:100%; background:var(--mint); }
+.session-banner-progress span { color:var(--muted); font-size:11px; font-weight:750; }
+.study-session-banner .secondary-button { width:auto; white-space:nowrap; }
+.session-finish-grid,.session-mastery-summary { display:grid; grid-template-columns:repeat(3,1fr); gap:13px; margin:18px 0; }
+.session-finish-grid article,.session-mastery-summary article { display:grid; gap:4px; padding:20px; border:1px solid var(--line); border-radius:14px; background:white; }
+.session-finish-grid strong { color:var(--coral); font-size:30px; }
+.session-finish-grid span,.session-mastery-summary span,.session-mastery-summary small { color:var(--muted); }
+.session-mastery-summary article { border-left:4px solid var(--mint); }
+.session-mastery-summary strong { font-size:21px; }
+.session-error-list small { display:block; margin-top:10px; color:var(--muted); }
+.session-finish-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:18px; }
+.session-finish-actions .primary-button,.session-finish-actions .secondary-button { width:auto; }
+.resume-detail { display:grid; gap:2px; max-width:520px !important; text-align:left; }
+.resume-detail span { color:#765416; font-size:10px; letter-spacing:.06em; text-transform:uppercase; }
+.resume-detail strong { color:var(--ink); }
+.resume-detail small { color:var(--muted); font-weight:650; }
+.exam-submission-notice { margin:-8px 0 14px; padding:11px 14px; border:1px solid #d8b765; border-radius:10px; background:var(--amber-soft); color:#765416; font-size:12px; font-weight:750; }
+.diagram-savebar { display:grid; grid-template-columns:minmax(180px,1fr) auto minmax(180px,1fr); gap:8px; align-items:end; margin-bottom:12px; padding:12px; border:1px solid #b8dcca; border-radius:10px; background:#fff; }
+.diagram-savebar label { display:grid; gap:4px; color:var(--muted); font-size:10px; font-weight:850; }
+.diagram-savebar input,.diagram-savebar select { min-width:0; min-height:38px; padding:7px 9px; border:1px solid var(--line); border-radius:8px; background:white; color:var(--ink); }
+.diagram-savebar .primary-button { width:auto; min-height:38px; }
+.active-check { margin-top:14px; }
+.model-content>.active-check { width:100%; }
+.model-content>small,.node-detail>small,.sim-active-checks>small,.challenge>small { display:block; margin-top:8px; color:var(--muted); line-height:1.45; }
+.sim-active-checks { display:flex; flex-wrap:wrap; gap:9px; margin-top:14px; padding:14px; border:1px solid var(--line); border-radius:12px; background:white; }
+.sim-active-checks .primary-button { width:auto; }
+.sim-active-checks small { width:100%; margin:0; }
+
+@media (max-width:760px) {
+  .study-session-banner { width:calc(100% - 28px); grid-template-columns:1fr; margin:10px auto 0; }
+  .study-session-banner .secondary-button { width:100%; }
+  .session-finish-grid,.session-mastery-summary { grid-template-columns:1fr; }
+  .session-finish-actions { flex-direction:column; }
+  .session-finish-actions .primary-button,.session-finish-actions .secondary-button { width:100%; }
+  .diagram-savebar { grid-template-columns:1fr; }
+  .diagram-savebar .primary-button { width:100%; }
+  .resume-detail { max-width:none !important; }
+  .exam-bar .primary-button.compact { width:100%; }
+  .sim-active-checks { flex-direction:column; }
+  .sim-active-checks .primary-button { width:100%; }
+}

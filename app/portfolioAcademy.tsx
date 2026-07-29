@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { createChainTasks, detectiveCases, formulaNodes } from "@/lib/data/advancedPortfolio";
+import { createChainTasks, detectiveCases, formulaNodes, type ChainTask } from "@/lib/data/advancedPortfolio";
 import type { AppProgress, PortfolioAttempt } from "@/lib/types";
 import { addLearningAttempt } from "@/lib/storage";
 
@@ -46,15 +46,28 @@ function logAttempt(setProgress: React.Dispatch<React.SetStateAction<AppProgress
   ));
 }
 
-export function PortfolioAcademy({progress,setProgress,onExit}:{progress:AppProgress;setProgress:React.Dispatch<React.SetStateAction<AppProgress>>;onExit:()=>void}) {
+const formulaTopic = (id: string) => id === "apt"
+  ? "APT & Arbitrage"
+  : id === "car"
+    ? "EMH & Event Study"
+    : ["beta", "capm", "jensen"].includes(id)
+      ? "CAPM, SML & Beta"
+      : ["sharpe", "treynor", "ir"].includes(id)
+        ? "Performance Measures"
+        : id === "mvp"
+          ? "Minimum-Variance Portfolio"
+          : "Diversification & Correlation";
+
+export function PortfolioAcademy({progress,setProgress,onExit,onStartQuiz}:{progress:AppProgress;setProgress:React.Dispatch<React.SetStateAction<AppProgress>>;onExit:()=>void;onStartQuiz:(topic:string)=>void}) {
   const [area,setArea]=useState<Area>("home");
+  const [challengeTask,setChallengeTask]=useState<ChainTask>();
   const attempts=progress.portfolioAttempts??[];
-  if(area==="chains") return <ChainTrainer setProgress={setProgress} onBack={()=>setArea("home")}/>;
+  if(area==="chains") return <ChainTrainer setProgress={setProgress} initialTask={challengeTask} attemptMode={challengeTask?"challenge":"chain"} onBack={()=>{setChallengeTask(undefined);setArea("home")}}/>;
   if(area==="decision") return <DecisionTree onBack={()=>setArea("home")}/>;
-  if(area==="network") return <FormulaNetwork onBack={()=>setArea("home")}/>;
-  if(area==="simulator") return <Simulator onBack={()=>setArea("home")}/>;
+  if(area==="network") return <FormulaNetwork onBack={()=>setArea("home")} onStartQuiz={onStartQuiz}/>;
+  if(area==="simulator") return <Simulator onBack={()=>setArea("home")} onStartQuiz={onStartQuiz}/>;
   if(area==="detective") return <Detective setProgress={setProgress} onBack={()=>setArea("home")}/>;
-  if(area==="mastery") return <Mastery attempts={attempts} setProgress={setProgress} onBack={()=>setArea("home")}/>;
+  if(area==="mastery") return <Mastery attempts={attempts} onStartChallenge={(task)=>{setChallengeTask(task);setArea("chains")}} onBack={()=>setArea("home")}/>;
   const today=attempts.filter(x=>new Date(x.completedAt).toDateString()===new Date().toDateString()).length;
   return <section className="page academy-page">
     <div className="trainer-head"><button className="text-button" onClick={onExit}>← Fachtrainer</button><span>{today} Übungen heute</span></div>
@@ -70,25 +83,25 @@ export function PortfolioAcademy({progress,setProgress,onExit}:{progress:AppProg
   </section>;
 }
 
-function ChainTrainer({setProgress,onBack}:{setProgress:React.Dispatch<React.SetStateAction<AppProgress>>;onBack:()=>void}) {
-  const [tasks,setTasks]=useState(()=>createChainTasks()); const [index,setIndex]=useState(0); const [values,setValues]=useState<string[]>([]);
+function ChainTrainer({setProgress,onBack,initialTask,attemptMode}:{setProgress:React.Dispatch<React.SetStateAction<AppProgress>>;onBack:()=>void;initialTask?:ChainTask;attemptMode:"chain"|"challenge"}) {
+  const [tasks,setTasks]=useState(()=>initialTask?[initialTask]:createChainTasks()); const [index,setIndex]=useState(0); const [values,setValues]=useState<string[]>([]);
   const [sheet,setSheet]=useState(""); const [interpretation,setInterpretation]=useState(""); const [submitted,setSubmitted]=useState(false); const [showFormula,setShowFormula]=useState(false);
   const task=tasks[index%tasks.length];
   const answers=task.steps.map((s,i)=>parseNumber(values[i]??"",s.unit));
   const correct=task.steps.map((s,i)=>Number.isFinite(answers[i])&&Math.abs(answers[i]-s.answer)<=(s.tolerance??Math.max(.02,Math.abs(s.answer)*.006)));
   const keywordHits=task.interpretationKeywords.filter(k=>interpretation.toLowerCase().includes(k)).length;
   const score=task.steps.reduce((sum,s,i)=>sum+(correct[i]?s.points:0),0)+(keywordHits>=task.interpretationKeywords.length?2:keywordHits);
-  const next=()=>{setTasks(current=>[...current,...(score<task.totalPoints*.7?createChainTasks(Date.now()).filter(x=>x.id===task.id):[])]);setIndex(i=>i+1);setValues([]);setSheet("");setInterpretation("");setSubmitted(false);setShowFormula(false)};
-  const submit=()=>{setSubmitted(true);logAttempt(setProgress,{taskId:task.id,topic:task.topic,mode:"chain",score,maxScore:task.totalPoints,errorTypes:[...(!correct.every(Boolean)?["Rechenweg/Einheit"]:[]),...(keywordHits<task.interpretationKeywords.length?["Interpretation"]:[])]})};
-  return <section className="page academy-page"><div className="trainer-head"><button className="text-button" onClick={onBack}>← Klausurwerkstatt</button><span>Gemischter Fall {index+1} / {tasks.length}</span></div>
-    <article className="question-card chain-card"><span className="question-type">THEMA NICHT ANGEGEBEN · {task.totalPoints} PUNKTE</span><h1>{task.prompt}</h1>
+  const next=()=>{if(attemptMode==="challenge"){onBack();return}setTasks(current=>[...current,...(score<task.totalPoints*.7?createChainTasks(Date.now()).filter(x=>x.id===task.id):[])]);setIndex(i=>i+1);setValues([]);setSheet("");setInterpretation("");setSubmitted(false);setShowFormula(false)};
+  const submit=()=>{setSubmitted(true);logAttempt(setProgress,{taskId:task.id,topic:task.topic,mode:attemptMode,score,maxScore:task.totalPoints,errorTypes:[...(!correct.every(Boolean)?["Rechenweg/Einheit"]:[]),...(keywordHits<task.interpretationKeywords.length?["Interpretation"]:[])]})};
+  return <section className="page academy-page"><div className="trainer-head"><button className="text-button" onClick={onBack}>← Klausurwerkstatt</button><span>{attemptMode==="challenge"?"Tages-Challenge":`Gemischter Fall ${index+1} / ${tasks.length}`}</span></div>
+    <article className="question-card chain-card"><span className="question-type">{attemptMode==="challenge"?"TAGES-CHALLENGE":"THEMA NICHT ANGEGEBEN"} · {task.totalPoints} PUNKTE</span><h1>{task.prompt}</h1>
       <div className="exam-tools"><button className="secondary-button" onClick={()=>setShowFormula(v=>!v)}>{showFormula?"Formelblatt schließen":"Formelblatt öffnen"}</button><span>Eingaben: 7,07% · 7.07 · 0,0707 werden passend erkannt</span></div>
       {showFormula&&<div className="formula-sheet">{formulaNodes.map(n=><div key={n.id}><b>{n.title}</b><code>{n.formula}</code></div>)}</div>}
       <label className="scratchpad"><b>Freies Rechenblatt</b><textarea value={sheet} onChange={e=>setSheet(e.target.value)} placeholder="Ansatz, Zwischenschritte und Notizen – dieses Feld wird nicht automatisch bewertet."/></label>
       <div className="chain-answers">{task.steps.map((step,i)=><label key={step.label} className={submitted?(correct[i]?"right":"wrong"):""}><span><b>{step.label}</b><small>{step.points} P · {step.unit||"ohne Einheit"}</small></span><input disabled={submitted} inputMode="decimal" value={values[i]??""} onChange={e=>setValues(v=>task.steps.map((_,x)=>x===i?e.target.value:(v[x]??"")))} placeholder="Ergebnis"/>{submitted&&!correct[i]&&<em>Lösung: {String(step.answer).replace(".",",")} {step.unit}</em>}</label>)}</div>
       <label className="scratchpad interpretation-box"><b>Ergebnis in eigenen Worten interpretieren</b><textarea disabled={submitted} value={interpretation} onChange={e=>setInterpretation(e.target.value)} placeholder="Was bedeutet das Ergebnis ökonomisch?"/></label>
       {submitted&&<div className="chain-result"><strong>{score} / {task.totalPoints} Punkte</strong><div><b>{task.model}</b><code>{task.formula}</code><p>{task.interpretation}</p></div><ul>{task.steps.map((s,i)=><li key={s.label} className={correct[i]?"ok":"miss"}>{correct[i]?"✓":"×"} {s.label}: {correct[i]?`${s.points} P`:`0/${s.points} P · ${s.hint}`}</li>)}<li className={keywordHits>=task.interpretationKeywords.length?"ok":"miss"}>{keywordHits>=task.interpretationKeywords.length?"✓ 2 P Interpretation":`${keywordHits}/2 P Interpretation · Kernbegriffe: ${task.interpretationKeywords.join(", ")}`}</li></ul></div>}
-      <div className="question-actions">{submitted?<button className="primary-button" onClick={next}>Nächster unbekannter Fall →</button>:<button className="primary-button" disabled={values.some(v=>!v?.trim())||values.length<task.steps.length||!interpretation.trim()} onClick={submit}>Abgeben und Teilpunkte berechnen</button>}</div>
+      <div className="question-actions">{submitted?<button className="primary-button" onClick={next}>{attemptMode==="challenge"?"Challenge abschließen":"Nächster unbekannter Fall"} →</button>:<button className="primary-button" disabled={values.some(v=>!v?.trim())||values.length<task.steps.length||!interpretation.trim()} onClick={submit}>Abgeben und Teilpunkte berechnen</button>}</div>
     </article></section>;
 }
 
@@ -100,19 +113,19 @@ function DecisionTree({onBack}:{onBack:()=>void}) {
     <div className="decision-results"><p>{matches.length} passende Kandidaten</p>{matches.map(n=><article key={n.id}><span>{n.group}</span><h2>{n.title}</h2><code>{n.formula}</code><p><b>Warum:</b> {n.asks}. {n.meaning}.</p></article>)}</div></section>;
 }
 
-function FormulaNetwork({onBack}:{onBack:()=>void}) {
+function FormulaNetwork({onBack,onStartQuiz}:{onBack:()=>void;onStartQuiz:(topic:string)=>void}) {
  const [selected,setSelected]=useState(formulaNodes[0].id); const node=formulaNodes.find(n=>n.id===selected)!;
  return <section className="page academy-page"><div className="trainer-head"><button className="text-button" onClick={onBack}>← Klausurwerkstatt</button><span>11 verbundene Modelle</span></div><div className="page-heading"><p className="eyebrow">FORMELNETZ STATT FORMELLISTE</p><h1>Wie die Modelle zusammenhängen</h1><p>Wähle einen Knoten. Verwandte Modelle werden hervorgehoben und erklären, welche Größe jeweils ersetzt oder weiterverwendet wird.</p></div>
- <div className="formula-network"><div className="network-nodes">{[...new Set(formulaNodes.map(n=>n.group))].map(g=><section key={g}><h3>{g}</h3>{formulaNodes.filter(n=>n.group===g).map(n=><button className={`${selected===n.id?"selected":""} ${node.related.includes(n.id)?"related":""}`} onClick={()=>setSelected(n.id)} key={n.id}>{n.title}<small>{n.asks}</small></button>)}</section>)}</div><article className="node-detail"><span>{node.group}</span><h2>{node.title}</h2><code>{node.formula}</code><dl><div><dt>Gesucht</dt><dd>{node.asks}</dd></div><div><dt>Inputs</dt><dd>{node.inputs}</dd></div><div><dt>Bedeutung</dt><dd>{node.meaning}</dd></div><div><dt>Einheit</dt><dd>{node.unit}</dd></div><div><dt>Typische Falle</dt><dd>{node.trap}</dd></div></dl><div className="related-chips">Verwandt: {node.related.map(id=><button key={id} onClick={()=>setSelected(id)}>{formulaNodes.find(n=>n.id===id)?.title}</button>)}</div></article></div></section>;
+ <div className="formula-network"><div className="network-nodes">{[...new Set(formulaNodes.map(n=>n.group))].map(g=><section key={g}><h3>{g}</h3>{formulaNodes.filter(n=>n.group===g).map(n=><button className={`${selected===n.id?"selected":""} ${node.related.includes(n.id)?"related":""}`} onClick={()=>setSelected(n.id)} key={n.id}>{n.title}<small>{n.asks}</small></button>)}</section>)}</div><article className="node-detail"><span>{node.group}</span><h2>{node.title}</h2><code>{node.formula}</code><dl><div><dt>Gesucht</dt><dd>{node.asks}</dd></div><div><dt>Inputs</dt><dd>{node.inputs}</dd></div><div><dt>Bedeutung</dt><dd>{node.meaning}</dd></div><div><dt>Einheit</dt><dd>{node.unit}</dd></div><div><dt>Typische Falle</dt><dd>{node.trap}</dd></div></dl><div className="related-chips">Verwandt: {node.related.map(id=><button key={id} onClick={()=>setSelected(id)}>{formulaNodes.find(n=>n.id===id)?.title}</button>)}</div><button className="primary-button active-check" onClick={()=>onStartQuiz(formulaTopic(node.id))}>Dieses Modell aktiv mit MCQs prüfen →</button><small>Das Ansehen verändert deinen Lernstand nicht; erst beantwortete Fragen zählen.</small></article></div></section>;
 }
 
-function Simulator({onBack}:{onBack:()=>void}) {
+function Simulator({onBack,onStartQuiz}:{onBack:()=>void;onStartQuiz:(topic:string)=>void}) {
  const [w,setW]=useState(.5),[rho,setRho]=useState(0),[beta,setBeta]=useState(1),[rf,setRf]=useState(3),[rm,setRm]=useState(9); const s1=10,s2=15;
  const vol=Math.sqrt(w*w*s1*s1+(1-w)*(1-w)*s2*s2+2*w*(1-w)*rho*s1*s2); const capm=rf+beta*(rm-rf);
  const curve=Array.from({length:21},(_,i)=>{const x=i/20;return {x,y:Math.sqrt(x*x*s1*s1+(1-x)*(1-x)*s2*s2+2*x*(1-x)*rho*s1*s2)}}); const maxY=18;
  return <section className="page academy-page"><div className="trainer-head"><button className="text-button" onClick={onBack}>← Klausurwerkstatt</button><span>Was passiert, wenn …?</span></div><div className="page-heading"><p className="eyebrow">INTERAKTIVER PLAUSIBILITÄTSCHECK</p><h1>Diversifikation & CAPM erleben</h1><p>Verändere einen Input und formuliere zuerst innerlich die erwartete Richtung. Die Kurve und Kennzahlen reagieren sofort.</p></div>
  <div className="sim-grid"><article className="panel"><h2>Zwei-Asset-Portfolio</h2><label>Gewicht Asset A <b>{Math.round(w*100)}%</b><input type="range" min="0" max="1" step=".05" value={w} onChange={e=>setW(+e.target.value)}/></label><label>Korrelation ρ <b>{rho.toFixed(1)}</b><input type="range" min="-1" max="1" step=".1" value={rho} onChange={e=>setRho(+e.target.value)}/></label><svg viewBox="0 0 420 180" role="img" aria-label="Portfoliovolatilität nach Gewicht"><polyline points={curve.map(p=>`${20+p.x*380},${165-p.y/maxY*140}`).join(" ")} fill="none" stroke="currentColor" strokeWidth="5"/><line x1="20" y1="165" x2="400" y2="165" stroke="currentColor" opacity=".25"/></svg><div className="sim-output"><strong>{vol.toFixed(2)}%</strong><span>Portfolio-Volatilität</span></div><p>{rho===1?"Bei ρ=1 verschwindet der reine Diversifikationseffekt.":rho<0?"Negative Korrelation verstärkt die Risikoreduktion.":"Nicht perfekte Korrelation reduziert Risiko gegenüber reinem Gleichlauf."}</p></article>
- <article className="panel"><h2>Security Market Line</h2><label>Beta <b>{beta.toFixed(1)}</b><input type="range" min="0" max="2" step=".1" value={beta} onChange={e=>setBeta(+e.target.value)}/></label><label>Risikofreier Zins <b>{rf}%</b><input type="range" min="0" max="7" step=".5" value={rf} onChange={e=>setRf(+e.target.value)}/></label><label>Marktrendite <b>{rm}%</b><input type="range" min="7" max="15" step=".5" value={rm} onChange={e=>setRm(+e.target.value)}/></label><div className="sml-chart"><span style={{left:`${beta/2*88+6}%`,bottom:`${Math.min(90,capm/16*80+5)}%`}}/><i/></div><div className="sim-output"><strong>{capm.toFixed(2)}%</strong><span>CAPM-Rendite</span></div><p>Steilere SML bei größerer Marktrisikoprämie; Beta bewegt das Asset entlang der Linie.</p></article></div></section>;
+ <article className="panel"><h2>Security Market Line</h2><label>Beta <b>{beta.toFixed(1)}</b><input type="range" min="0" max="2" step=".1" value={beta} onChange={e=>setBeta(+e.target.value)}/></label><label>Risikofreier Zins <b>{rf}%</b><input type="range" min="0" max="7" step=".5" value={rf} onChange={e=>setRf(+e.target.value)}/></label><label>Marktrendite <b>{rm}%</b><input type="range" min="7" max="15" step=".5" value={rm} onChange={e=>setRm(+e.target.value)}/></label><div className="sml-chart"><span style={{left:`${beta/2*88+6}%`,bottom:`${Math.min(90,capm/16*80+5)}%`}}/><i/></div><div className="sim-output"><strong>{capm.toFixed(2)}%</strong><span>CAPM-Rendite</span></div><p>Steilere SML bei größerer Marktrisikoprämie; Beta bewegt das Asset entlang der Linie.</p></article></div><div className="sim-active-checks"><button className="primary-button" onClick={()=>onStartQuiz("Diversification & Correlation")}>Diversifikation aktiv prüfen →</button><button className="primary-button" onClick={()=>onStartQuiz("CAPM, SML & Beta")}>CAPM aktiv prüfen →</button><small>Slider und Diagramme sind Erklärung; nur die anschließende bewertete Aufgabe verändert den Lernstand.</small></div></section>;
 }
 
 function Detective({setProgress,onBack}:{setProgress:React.Dispatch<React.SetStateAction<AppProgress>>;onBack:()=>void}) {
@@ -121,10 +134,10 @@ function Detective({setProgress,onBack}:{setProgress:React.Dispatch<React.SetSta
  return <section className="page academy-page"><div className="trainer-head"><button className="text-button" onClick={onBack}>← Klausurwerkstatt</button><span>Fall {index+1} / {detectiveCases.length}</span></div><article className="question-card detective"><span className="question-type">FEHLERDETEKTIV</span><h1>{item.title}</h1><p>Markiere die erste fachlich falsche Zeile.</p><div className="solution-lines">{item.lines.map((line,i)=><button disabled={checked} className={`${selected===i?"selected":""} ${checked&&i===item.wrong?"correct":""} ${checked&&selected===i&&i!==item.wrong?"incorrect":""}`} onClick={()=>setSelected(i)} key={line}><span>{i+1}</span><code>{line}</code></button>)}</div>{checked&&<div className={selected===item.wrong?"feedback correct-feedback":"feedback wrong-feedback"}><b>{selected===item.wrong?"Erste falsche Zeile erkannt.":"Die frühere Ursache liegt an einer anderen Stelle."}</b><p>{item.why}</p></div>}<div className="question-actions">{checked?<button className="primary-button" onClick={()=>{setIndex(i=>i+1);setSelected(undefined);setChecked(false)}}>Nächster Fehler →</button>:<button className="primary-button" disabled={selected===undefined} onClick={submit}>Zeile prüfen</button>}</div></article></section>;
 }
 
-function Mastery({attempts,setProgress,onBack}:{attempts:PortfolioAttempt[];setProgress:React.Dispatch<React.SetStateAction<AppProgress>>;onBack:()=>void}) {
+function Mastery({attempts,onStartChallenge,onBack}:{attempts:PortfolioAttempt[];onStartChallenge:(task:ChainTask)=>void;onBack:()=>void}) {
  const topics=useMemo(()=>[...new Set(createChainTasks(1).map(t=>t.topic))].map(topic=>{const rows=attempts.filter(a=>a.topic===topic);const recent=rows.slice(-5);const score=recent.reduce((s,a)=>s+a.score,0),max=recent.reduce((s,a)=>s+a.maxScore,0);const days=new Set(rows.map(a=>new Date(a.completedAt).toDateString())).size;return {topic,attempts:rows.length,accuracy:max?Math.round(score/max*100):0,days,mastered:rows.length>=3&&days>=2&&max>0&&score/max>=.8}}),[attempts]);
- const errors=Object.entries(attempts.flatMap(a=>a.errorTypes).reduce<Record<string,number>>((acc,e)=>(acc[e]=(acc[e]??0)+1,acc),{})).sort((a,b)=>b[1]-a[1]); const challenge=createChainTasks(new Date().getDate())[new Date().getDate()%5];
+ const errors=Object.entries(attempts.flatMap(a=>a.errorTypes).reduce<Record<string,number>>((acc,e)=>(acc[e]=(acc[e]??0)+1,acc),{})).sort((a,b)=>b[1]-a[1]); const challenge=createChainTasks(new Date().getDate())[new Date().getDate()%5]; const completedToday=[...attempts].reverse().find(item=>item.mode==="challenge"&&new Date(item.completedAt).toDateString()===new Date().toDateString());
  return <section className="page academy-page"><div className="trainer-head"><button className="text-button" onClick={onBack}>← Klausurwerkstatt</button><span>{attempts.length} protokollierte Versuche</span></div><div className="page-heading"><p className="eyebrow">NICHT EINMAL RICHTIG, SONDERN DAUERHAFT ABRUFBAR</p><h1>Fehlerprofil & Mastery</h1><p>Beherrscht bedeutet: mindestens drei Versuche, an mindestens zwei Tagen und zuletzt mindestens 80% der Teilpunkte.</p></div>
- <div className="mastery-layout"><article className="panel challenge"><span>TAGES-CHALLENGE</span><h2>{challenge.prompt}</h2><p>Unbekannter Aufgabentyp · {challenge.totalPoints} Punkte · Zielzeit 12 Minuten</p><button className="primary-button" onClick={()=>logAttempt(setProgress,{taskId:challenge.id,topic:challenge.topic,mode:"challenge",score:0,maxScore:challenge.totalPoints,errorTypes:["Challenge gestartet"]})}>Challenge in Aufgabenketten vormerken</button></article><article className="panel"><h2>Häufigste Rechenmuster</h2>{errors.length?errors.slice(0,6).map(([e,n])=><div className="error-bar" key={e}><span>{e}</span><div><i style={{width:`${Math.min(100,n/(errors[0][1] as number)*100)}%`}}/></div><b>{n}×</b></div>):<p>Noch kein Fehlerprofil. Löse eine Aufgabenkette oder einen Fehlerdetektiv.</p>}</article></div>
+ <div className="mastery-layout"><article className="panel challenge"><span>TAGES-CHALLENGE</span><h2>{challenge.prompt}</h2><p>Unbekannter Aufgabentyp · {challenge.totalPoints} Punkte · Zielzeit 12 Minuten</p>{completedToday&&<strong>Heute erreicht: {completedToday.score}/{completedToday.maxScore} Punkte</strong>}<button className="primary-button" onClick={()=>onStartChallenge(challenge)}>{completedToday?"Challenge erneut lösen":"Challenge jetzt lösen"} →</button><small>Ein Versuch wird erst nach deiner tatsächlichen Abgabe gespeichert.</small></article><article className="panel"><h2>Häufigste Rechenmuster</h2>{errors.length?errors.slice(0,6).map(([e,n])=><div className="error-bar" key={e}><span>{e}</span><div><i style={{width:`${Math.min(100,n/(errors[0][1] as number)*100)}%`}}/></div><b>{n}×</b></div>):<p>Noch kein Fehlerprofil. Löse eine Aufgabenkette oder einen Fehlerdetektiv.</p>}</article></div>
  <div className="mastery-grid">{topics.map(t=><article key={t.topic} className={t.mastered?"mastered":""}><span>{t.mastered?"BEHERRSCHT":t.attempts?"IM AUFBAU":"NEU"}</span><h3>{t.topic}</h3><div className="progress-track"><i style={{width:`${t.accuracy}%`}}/></div><p>{t.accuracy}% · {t.attempts} Versuche · {t.days} Lerntage</p></article>)}</div></section>;
 }

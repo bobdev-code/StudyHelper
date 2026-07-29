@@ -1,5 +1,6 @@
 import { flashcards, quizQuestions } from "./data";
-import type { AnswerRecord, AppProgress, LearningAttempt, LearningStage, Subject } from "./types";
+import { stabilizedForecast } from "./forecast";
+import type { AnswerRecord, AppProgress, LearningAttempt, LearningStage, StudySession, Subject } from "./types";
 
 export type TopicMastery = {
   subject: Subject;
@@ -39,7 +40,7 @@ function legacyAttempt(answer: AnswerRecord): LearningAttempt {
   };
 }
 
-export function topicMastery(progress: AppProgress): TopicMastery[] {
+export function topicMastery(progress: AppProgress, includeExamAttempts = true): TopicMastery[] {
   const all = new Map<string, { subject: Subject; topic: string; attempts: LearningAttempt[] }>();
   [...flashcards, ...quizQuestions].forEach((item) => {
     const key = `${item.subject}:${item.topic}`;
@@ -49,7 +50,8 @@ export function topicMastery(progress: AppProgress): TopicMastery[] {
   const attempts = [
     ...(progress.attempts ?? []),
     ...progress.answers.filter((answer) => !explicitIds.has(`answer-${answer.id}`)).map(legacyAttempt),
-  ].sort((a, b) => a.completedAt.localeCompare(b.completedAt));
+  ].filter((item) => includeExamAttempts || item.mode !== "exam")
+    .sort((a, b) => a.completedAt.localeCompare(b.completedAt));
   attempts.forEach((attempt) => {
     const key = `${attempt.subject}:${attempt.topic}`;
     const row = all.get(key) ?? { subject: attempt.subject, topic: attempt.topic, attempts: [] };
@@ -60,7 +62,17 @@ export function topicMastery(progress: AppProgress): TopicMastery[] {
   return [...all.values()].map(({ subject, topic, attempts: topicAttempts }) => {
     const recent = topicAttempts.slice(-8);
     const attemptWeight = (item: LearningAttempt, index: number) => {
-      const modeWeight = item.mode === "flashcard" ? .65 : item.mode === "quiz" ? 1 : item.mode === "exam" ? 1.5 : 1.3;
+      const modeWeight = item.mode === "flashcard"
+        ? 0.55
+        : item.mode === "quiz"
+          ? 0.9
+          : item.mode === "exam"
+            ? 1.6
+            : item.mode === "portfolio-detective"
+              ? 0.85
+              : item.mode === "calculation-lab" || item.mode === "tax-case" || item.mode === "portfolio-chain"
+                ? 1.3
+                : 1;
       return (index + 1) * (item.difficulty ?? 2) / 2 * modeWeight;
     };
     const weightTotal = recent.reduce((sum, item, index) => sum + attemptWeight(item, index), 0) || 1;
@@ -91,22 +103,21 @@ export function topicMastery(progress: AppProgress): TopicMastery[] {
 }
 
 export function scoreForecast(progress: AppProgress, subject: Subject) {
-  const baseline = subject === "portfolio" ? 31 : 50;
-  const rows = topicMastery(progress).filter((item) => item.subject === subject);
-  if (!rows.some((item) => item.attempts > 0)) return { low: baseline, high: baseline, central: baseline };
+  const baseline = subject === "portfolio" ? 29 : 50;
+  const rows = topicMastery(progress, false).filter((item) => item.subject === subject);
   const recentExams = progress.exams.filter((item) => item.subject === subject && item.score !== undefined && item.maxScore).slice(-5);
-  const examWeight = recentExams.reduce((sum, item) => sum + item.maxScore!, 0);
-  const examEstimate = examWeight
-    ? recentExams.reduce((sum, item) => sum + item.score! / item.maxScore! * 90 * item.maxScore!, 0) / examWeight
-    : undefined;
-  const topicWeights = new Map<string, number>();
-  quizQuestions.filter((item) => item.subject === subject).forEach((item) => topicWeights.set(item.topic, (topicWeights.get(item.topic) ?? 0) + item.points));
-  const weightTotal = rows.reduce((sum, item) => sum + (topicWeights.get(item.topic) ?? 3), 0) || 1;
-  const masteryEstimate = rows.reduce((sum, item) => sum + item.mastery * (topicWeights.get(item.topic) ?? 3), 0) / weightTotal * .9;
-  const central = Math.round(examEstimate !== undefined ? masteryEstimate * .45 + examEstimate * .55 : baseline * .35 + masteryEstimate * .65);
-  const covered = rows.filter((item) => item.attempts > 0).length / Math.max(1, rows.length);
-  const uncertainty = Math.max(5, Math.round(15 - covered * 7 - Math.min(3, recentExams.length)));
-  return { low: Math.max(0, Math.round(central - uncertainty)), high: Math.min(90, Math.round(central + uncertainty)), central };
+  return stabilizedForecast({
+    baseline,
+    topics: rows.map((item) => ({
+      weight: 1,
+      mastery: item.mastery,
+      attempts: item.attempts,
+      days: item.days,
+      variants: item.variants,
+      highestStage: item.highestStage,
+    })),
+    exams: recentExams.map((item) => ({ score: item.score!, maxScore: item.maxScore! })),
+  });
 }
 
 export type PlanSubject = Subject | "all";
@@ -116,11 +127,11 @@ export function adaptiveQueue(progress: AppProgress, minutes: number, subject: P
   const rows = topicMastery(progress).filter((item) => subject === "all" || item.subject === subject);
   const ranked = rows.map((item) => {
     const latest = [...progress.answers].reverse().find((answer) => answer.subject === item.subject && answer.topic === item.topic);
-    const overdue = new Date(item.nextDueAt).getTime() <= now;
+    const overdue = item.attempts > 0 && new Date(item.nextDueAt).getTime() <= now;
     const dangerous = latest && !latest.correct && latest.confidence === "high";
     const priority = (overdue ? 40 : 0) + (dangerous ? 35 : 0) + (100 - item.mastery) + (item.subject === "portfolio" ? 8 : 0);
     const reasonKey = dangerous ? "false-confidence" : overdue ? "due" : item.attempts ? "weak-high-value" : "coverage";
-    return { ...item, priority, reasonKey, reason: dangerous ? "Scheinsicherheit korrigieren" : overdue ? "Wiederholung ist fällig" : item.attempts ? "Punktestarke Lücke schließen" : "Stoffabdeckung erweitern" };
+    return { ...item, priority, reasonKey, reason: dangerous ? "Scheinsicherheit korrigieren" : overdue ? "Wiederholung ist fällig" : item.attempts ? "Punktestarke Lücke schließen" : "Neu lernen" };
   }).sort((a,b)=>b.priority-a.priority);
   const size = Math.max(3, Math.min(8, Math.ceil(minutes / 7)));
   if (subject !== "all") return ranked.slice(0, size);
@@ -136,6 +147,37 @@ export function adaptiveQueue(progress: AppProgress, minutes: number, subject: P
   portfolioSlots = Math.max(1, Math.min(size - 1, portfolioSlots));
   const selected = [...portfolio.slice(0, portfolioSlots), ...tax.slice(0, size - portfolioSlots)];
   return selected.sort((a, b) => b.priority - a.priority);
+}
+
+export function averageSubjectMastery(progress: AppProgress, subject: Subject) {
+  const rows = topicMastery(progress).filter((item) => item.subject === subject);
+  return rows.length ? Math.round(rows.reduce((sum, item) => sum + item.mastery, 0) / rows.length) : 0;
+}
+
+export function createStudySession(progress: AppProgress, minutes: number, subject: PlanSubject = "all"): StudySession {
+  const now = new Date().toISOString();
+  const queue = adaptiveQueue(progress, minutes, subject);
+  const perItem = Math.max(3, Math.round(minutes / Math.max(1, queue.length)));
+  return {
+    id: `study-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    subject,
+    plannedMinutes: minutes,
+    startedAt: now,
+    updatedAt: now,
+    currentIndex: 0,
+    items: queue.map((item) => ({
+      id: `${item.subject}:${item.topic}`,
+      subject: item.subject,
+      topic: item.topic,
+      view: item.attempts === 0 && flashcards.some((card) => card.subject === item.subject && card.topic === item.topic) ? "cards" : "quiz",
+      estimatedMinutes: perItem,
+    })),
+    completedItemIds: [],
+    baselineMastery: {
+      portfolio: averageSubjectMastery(progress, "portfolio"),
+      tax: averageSubjectMastery(progress, "tax"),
+    },
+  };
 }
 
 export function subjectCoverage(progress: AppProgress, subject: Subject) {

@@ -137,5 +137,5 @@ test("persists tax written answers and ships source-bound exam aids", async () =
   assert.match(calculator, /class ExpressionParser/);
   assert.doesNotMatch(calculator, /\beval\s*\(|new Function/);
   assert.match(examUi, /ExamAidPanel/);
-  assert.match(adaptive, /item\.mode === "flashcard" \? \.65/);
+  assert.match(adaptive, /item\.mode === "flashcard"[\s\S]*\? 0\.55/);
 });

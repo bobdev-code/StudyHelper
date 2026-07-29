@@ -7,8 +7,10 @@ import {
   addAnswer,
   addLearningAttempt,
   defaultProgress,
+  clearLastProgressUser,
   loadProgress,
   mergeProgress,
+  prepareProgressForUser,
   resetProgress,
   reviewCard,
   saveProgress,
@@ -22,17 +24,26 @@ import type {
   Flashcard,
   Language,
   QuizQuestion,
+  StudySession,
   Subject,
 } from "@/lib/types";
 import { PortfolioAcademy } from "./portfolioAcademy";
 import { createLabTasks, labErrorByStage, type LabTask } from "@/lib/data/calculationLab";
 import { taxCases, taxCaseErrorByStep, type TaxCase } from "@/lib/data/taxCaseLab";
 import { getRememberMe, getSupabase, setRememberMe } from "@/lib/supabase";
-import { adaptiveQueue, scoreForecast, subjectCoverage, topicMastery, type PlanSubject } from "@/lib/adaptive";
+import {
+  adaptiveQueue,
+  averageSubjectMastery,
+  createStudySession,
+  scoreForecast,
+  subjectCoverage,
+  topicMastery,
+  type PlanSubject,
+} from "@/lib/adaptive";
 import { ExamWorkspace } from "./examWorkspace";
 import { ExamAidPanel } from "./examAids";
 
-type View = "dashboard" | "focus" | "mastery" | "plan" | "cards" | "quiz" | "trainer" | "errors" | "models" | "videos" | "exam";
+type View = "dashboard" | "focus" | "mastery" | "plan" | "cards" | "quiz" | "trainer" | "errors" | "models" | "videos" | "exam" | "session-summary";
 type SubjectScope = Subject | "all";
 type LearningTarget = { subject: Subject; topic: string };
 type Navigate = (view: View, target?: LearningTarget) => void;
@@ -61,7 +72,7 @@ const navItems: { view: View; de: string; en: string; icon: string; group: "over
   { view: "trainer", de: "Fachtrainer", en: "Subject training", icon: "∑", group: "learn" },
   { view: "models", de: "Modelle", en: "Models", icon: "⌁", group: "learn" },
   { view: "videos", de: "Video-Playlist", en: "Video playlist", icon: "▶", group: "learn" },
-  { view: "quiz", de: "Diagnose & Quiz", en: "Assessment & quiz", icon: "?", group: "test" },
+  { view: "quiz", de: "MCQ & Diagnose", en: "MCQ & assessment", icon: "?", group: "test" },
   { view: "errors", de: "Fehlerbuch", en: "Error log", icon: "!", group: "test" },
   { view: "exam", de: "Prüfungsmodus", en: "Exam mode", icon: "◇", group: "test" },
 ];
@@ -142,6 +153,57 @@ function ProfileIcon() {
   </svg>;
 }
 
+function StudySessionBanner({ session, onResume }: { session: StudySession; onResume: () => void }) {
+  const language = useLanguage();
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const elapsed = Math.max(0, Math.floor((now - new Date(session.startedAt).getTime()) / 60_000));
+  const remaining = Math.max(0, session.plannedMinutes - elapsed);
+  return <aside className="study-session-banner">
+    <div><span>◎</span><div><small>{tr(language, "AKTIVE OPTIMAL-SESSION", "ACTIVE OPTIMAL SESSION")}</small><strong>{session.currentIndex + 1}/{session.items.length} · {session.items[session.currentIndex]?.topic}</strong></div></div>
+    <div className="session-banner-progress"><i><b style={{ width: `${session.items.length ? session.completedItemIds.length / session.items.length * 100 : 0}%` }} /></i><span>{remaining} {tr(language, "Min verbleibend", "min remaining")}</span></div>
+    <button className="secondary-button" onClick={onResume}>{tr(language, "Aktuelle Aufgabe öffnen", "Open current task")} →</button>
+  </aside>;
+}
+
+function OptimalSessionSummary({
+  session,
+  progress,
+  navigate,
+  onStartNext,
+}: {
+  session: StudySession;
+  progress: AppProgress;
+  navigate: Navigate;
+  onStartNext: () => void;
+}) {
+  const language = useLanguage();
+  const sessionEnd = session.completedAt ?? new Date().toISOString();
+  const attempts = (progress.attempts ?? []).filter((item) => item.completedAt >= session.startedAt && item.completedAt <= sessionEnd);
+  const score = attempts.reduce((sum, item) => sum + item.score, 0);
+  const maxScore = attempts.reduce((sum, item) => sum + item.maxScore, 0);
+  const errors = attempts.flatMap((item) => item.errorTypes);
+  const subjects = session.subject === "all" ? (["portfolio", "tax"] as Subject[]) : [session.subject];
+  return <section className="page session-finish-page">
+    <PageHeading eyebrow={tr(language, "SESSION ABGESCHLOSSEN", "SESSION COMPLETE")} title={tr(language, "Dein Lernblock ist sauber abgeschlossen.", "Your study block is complete.")} description={tr(language, "Alle Ergebnisse sind gespeichert und die nächste Empfehlung wurde mit dem neuen Lernstand berechnet.", "All results are saved and the next recommendation has been recalculated from your updated mastery.")} />
+    <div className="session-finish-grid">
+      <article><strong>{session.completedItemIds.length}/{session.items.length}</strong><span>{tr(language, "Aufgabenblöcke", "task blocks")}</span></article>
+      <article><strong>{Number.isInteger(score) ? score : score.toFixed(1)}/{Number.isInteger(maxScore) ? maxScore : maxScore.toFixed(1)}</strong><span>{tr(language, "erreichte Punkte", "points earned")}</span></article>
+      <article><strong>{errors.length}</strong><span>{tr(language, "erkannte Fehler", "identified errors")}</span></article>
+    </div>
+    <div className="session-mastery-summary">{subjects.map((subject) => {
+      const before = session.baselineMastery[subject];
+      const after = averageSubjectMastery(progress, subject);
+      return <article key={subject}><span>{subjectName[subject]}</span><strong>{before}% → {after}%</strong><small>{after >= before ? `+${after - before}` : after - before} {tr(language, "Kompetenzpunkte", "mastery points")}</small></article>;
+    })}</div>
+    {errors.length > 0 && <div className="panel session-error-list"><h2>{tr(language, "Für die nächste Runde vorgemerkt", "Queued for the next round")}</h2><p>{[...new Set(errors)].join(" · ")}</p></div>}
+    <div className="session-finish-actions"><button className="primary-button" onClick={onStartNext}>{tr(language, "Weiter optimal lernen", "Continue optimal learning")} →</button><button className="secondary-button" onClick={() => navigate("dashboard")}>{tr(language, "Zum Dashboard", "Back to dashboard")}</button></div>
+  </section>;
+}
+
 export default function Home() {
   const [view, setView] = useState<View>("dashboard");
   const [subjectScope, setSubjectScope] = useState<SubjectScope>("all");
@@ -155,11 +217,16 @@ export default function Home() {
   const [cloudReady, setCloudReady] = useState(false);
   const [cloudState, setCloudState] = useState<"offline" | "syncing" | "synced" | "error">("offline");
   const progressRef = useRef(progress);
+  const userRef = useRef<User | null>(null);
   const language: Language = progress.settings.language ?? "de";
 
   useEffect(() => {
     progressRef.current = progress;
   }, [progress]);
+
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -176,18 +243,40 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (ready) saveProgress(progress);
-  }, [progress, ready]);
+    if (ready) saveProgress(progress, user?.id);
+  }, [progress, ready, user?.id]);
 
   useEffect(() => {
     const supabase = getSupabase();
-    supabase.auth.getSession().then(({ data }) => setUser(data.session?.user ?? null));
+    supabase.auth.getSession().then(({ data }) => {
+      const sessionUser = data.session?.user ?? null;
+      if (sessionUser) {
+        const scoped = prepareProgressForUser(progressRef.current, sessionUser.id);
+        progressRef.current = scoped;
+        setProgress(scoped);
+      }
+      userRef.current = sessionUser;
+      setUser(sessionUser);
+    });
     const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-      if (!session) {
+      const sessionUser = session?.user ?? null;
+      const previousUser = userRef.current;
+      if (sessionUser && previousUser?.id !== sessionUser.id) {
+        const scoped = prepareProgressForUser(progressRef.current, sessionUser.id);
+        progressRef.current = scoped;
+        setProgress(scoped);
+      }
+      if (!sessionUser && previousUser) {
+        saveProgress(progressRef.current, previousUser.id);
+        clearLastProgressUser(previousUser.id);
+        const guest = loadProgress();
+        progressRef.current = guest;
+        setProgress(guest);
         setCloudReady(false);
         setCloudState("offline");
       }
+      userRef.current = sessionUser;
+      setUser(sessionUser);
     });
     return () => data.subscription.unsubscribe();
   }, []);
@@ -198,13 +287,16 @@ export default function Home() {
     queueMicrotask(() => !cancelled && setCloudState("syncing"));
     void (async () => {
       try {
+        const scoped = prepareProgressForUser(progressRef.current, user.id);
+        progressRef.current = scoped;
+        setProgress(scoped);
         const { data, error } = await getSupabase().from("learning_progress").select("progress").eq("user_id", user.id).maybeSingle();
         if (cancelled) return;
         if (error) throw error;
         if (data?.progress) {
           setProgress((current) => mergeProgress(current, data.progress as AppProgress));
         } else {
-          const { error: uploadError } = await getSupabase().from("learning_progress").insert({ user_id: user.id, progress: progressRef.current });
+          const { error: uploadError } = await getSupabase().from("learning_progress").insert({ user_id: user.id, progress: scoped });
           if (uploadError) throw uploadError;
         }
         if (!cancelled) {
@@ -260,7 +352,71 @@ export default function Home() {
     setLearningTarget(undefined);
     setSubjectScope(next);
   };
+  const setActiveSubject = (next: Subject) => {
+    setSubjectScope(next);
+    setLearningTarget((current) => current?.subject === next ? current : undefined);
+  };
+  const routeStudyItem = (item: StudySession["items"][number]) => {
+    navigate(item.view, { subject: item.subject, topic: item.topic });
+  };
+  const startOptimalSession = (minutes = progress.settings.dailyMinutes || 30, subject: PlanSubject = subjectScope) => {
+    const session = createStudySession(progress, minutes, subject);
+    if (!session.items.length) {
+      navigate("focus");
+      return;
+    }
+    setProgress((current) => ({ ...current, activeStudySession: session }));
+    routeStudyItem(session.items[0]);
+  };
+  const completeStudyItem = () => {
+    const active = progress.activeStudySession;
+    if (!active || active.completedAt) return;
+    const currentItem = active.items[active.currentIndex];
+    const completedItemIds = currentItem && !active.completedItemIds.includes(currentItem.id)
+      ? [...active.completedItemIds, currentItem.id]
+      : active.completedItemIds;
+    const nextIndex = active.currentIndex + 1;
+    const updatedAt = new Date().toISOString();
+    if (nextIndex >= active.items.length) {
+      setProgress((current) => ({
+        ...current,
+        activeStudySession: {
+          ...(current.activeStudySession ?? active),
+          completedItemIds,
+          currentIndex: active.items.length,
+          updatedAt,
+          completedAt: updatedAt,
+        },
+      }));
+      navigate("session-summary");
+      return;
+    }
+    const nextItem = active.items[nextIndex];
+    setProgress((current) => ({
+      ...current,
+      activeStudySession: {
+        ...(current.activeStudySession ?? active),
+        completedItemIds,
+        currentIndex: nextIndex,
+        updatedAt,
+      },
+    }));
+    routeStudyItem(nextItem);
+  };
+  const resumeStudySession = () => {
+    const active = progress.activeStudySession;
+    const item = active?.items[active.currentIndex];
+    if (active && item && !active.completedAt) routeStudyItem(item);
+  };
   const showSubjectSwitcher = ["dashboard", "focus", "mastery", "plan"].includes(view);
+  const currentStudyItem = progress.activeStudySession?.items[progress.activeStudySession.currentIndex];
+  const isActiveStudyTask = Boolean(
+    currentStudyItem
+    && !progress.activeStudySession?.completedAt
+    && currentStudyItem.view === view
+    && currentStudyItem.subject === learningTarget?.subject
+    && currentStudyItem.topic === learningTarget?.topic,
+  );
 
   return (
     <LanguageContext.Provider value={language}><div className="app-shell">
@@ -312,24 +468,26 @@ export default function Home() {
             {user ? (user.user_metadata?.display_name || user.email) : tr(language,"Anmelden","Sign in")}
           </button>
         </div>
-        {view === "dashboard" && <Dashboard progress={progress} navigate={navigate} subjectScope={subjectScope} />}
-        {view === "focus" && <AdaptiveSession progress={progress} setProgress={setProgress} navigate={navigate} />}
+        {progress.activeStudySession && !progress.activeStudySession.completedAt && <StudySessionBanner session={progress.activeStudySession} onResume={resumeStudySession} />}
+        {view === "dashboard" && <Dashboard progress={progress} navigate={navigate} subjectScope={subjectScope} onStartOptimal={() => startOptimalSession()} />}
+        {view === "focus" && <AdaptiveSession progress={progress} setProgress={setProgress} navigate={navigate} onStartSession={startOptimalSession} />}
         {view === "mastery" && <MasteryMatrix progress={progress} navigate={navigate} />}
         {view === "plan" && <DailyPlan progress={progress} navigate={navigate} />}
-        {view === "cards" && <Cards key={`${subjectScope}-${learningTarget?.topic ?? "all"}`} progress={progress} setProgress={setProgress} initialSubject={subjectScope} initialTopic={learningTarget?.topic} />}
-        {view === "quiz" && <Quiz key={`${subjectScope}-${learningTarget?.topic ?? "all"}-${quizPreset ?? "regular"}`} setProgress={setProgress} preset={quizPreset} initialSubject={subjectScope} initialTopic={learningTarget?.topic} onPresetApplied={() => setQuizPreset(undefined)} />}
-        {view === "trainer" && <SubjectTrainer progress={progress} setProgress={setProgress} onStartTaxDiagnostic={() => { setQuizPreset("tax-diagnostic"); navigate("quiz"); }} />}
+        {view === "cards" && <Cards key={`${subjectScope}-${learningTarget?.topic ?? "all"}`} progress={progress} setProgress={setProgress} initialSubject={subjectScope} initialTopic={learningTarget?.topic} onSubjectChange={setActiveSubject} onSessionTaskComplete={isActiveStudyTask ? completeStudyItem : undefined} />}
+        {view === "quiz" && <Quiz key={`${subjectScope}-${learningTarget?.topic ?? "all"}-${quizPreset ?? "regular"}`} setProgress={setProgress} preset={quizPreset} initialSubject={subjectScope} initialTopic={learningTarget?.topic} onPresetApplied={() => setQuizPreset(undefined)} onSubjectChange={setActiveSubject} onSessionTaskComplete={isActiveStudyTask ? completeStudyItem : undefined} />}
+        {view === "trainer" && <SubjectTrainer progress={progress} setProgress={setProgress} navigate={navigate} onSubjectChange={setActiveSubject} onStartTaxDiagnostic={() => { setQuizPreset("tax-diagnostic"); navigate("quiz", { subject: "tax", topic: "Tax Liability" }); }} />}
         {view === "errors" && <ErrorBook progress={progress} navigate={navigate} />}
-        {view === "models" && <Models />}
-        {view === "videos" && <Videos />}
-        {view === "exam" && <ExamWorkspace key={subjectScope} progress={progress} setProgress={setProgress} language={language} initialSubject={subjectScope === "all" ? undefined : subjectScope} />}
+        {view === "models" && <Models initialSubject={subjectScope === "all" ? "portfolio" : subjectScope} navigate={navigate} onSubjectChange={setActiveSubject} />}
+        {view === "videos" && <Videos initialSubject={subjectScope === "all" ? "portfolio" : subjectScope} navigate={navigate} onSubjectChange={setActiveSubject} />}
+        {view === "exam" && <ExamWorkspace key={subjectScope} progress={progress} setProgress={setProgress} language={language} initialSubject={subjectScope === "all" ? undefined : subjectScope} onSubjectChange={setActiveSubject} />}
+        {view === "session-summary" && progress.activeStudySession && <OptimalSessionSummary session={progress.activeStudySession} progress={progress} navigate={navigate} onStartNext={() => startOptimalSession(progress.settings.dailyMinutes, progress.activeStudySession?.subject ?? "all")} />}
         <footer className="app-footer">
           <span>{user ? tr(language, cloudState === "synced" ? "Cloud-Lernstand synchronisiert" : cloudState === "error" ? "Synchronisierung fehlgeschlagen" : "Cloud-Lernstand wird synchronisiert …", cloudState === "synced" ? "Cloud progress synced" : cloudState === "error" ? "Sync failed" : "Syncing cloud progress …") : tr(language,"Lokaler Lernstand · für Gerätewechsel anmelden","Local progress · sign in to use other devices")}</span>
           <button
             className="text-button danger"
             onClick={() => {
               if (window.confirm(tr(language,"Wirklich den gesamten Lernstand zurücksetzen?","Reset all learning progress?"))) {
-                setProgress(resetProgress());
+                setProgress(resetProgress(user?.id));
               }
             }}
           >{tr(language,"Lernstand zurücksetzen","Reset progress")}</button>
@@ -397,7 +555,7 @@ function AuthDialog({ user, language, onClose }: { user: User | null; language: 
   </div>;
 }
 
-function Dashboard({ progress, navigate, subjectScope }: { progress: AppProgress; navigate: Navigate; subjectScope: SubjectScope }) {
+function Dashboard({ progress, navigate, subjectScope, onStartOptimal }: { progress: AppProgress; navigate: Navigate; subjectScope: SubjectScope; onStartOptimal: () => void }) {
   const language = useLanguage();
   const [daypart, setDaypart] = useState<"morning" | "day" | "evening">("day");
   useEffect(() => {
@@ -417,7 +575,10 @@ function Dashboard({ progress, navigate, subjectScope }: { progress: AppProgress
   const pScore = portfolioForecast.central;
   const tScore = taxForecast.central;
   const total = pScore + tScore;
-  const weak = getTopicStats(progress).filter((topic) => topic.answers > 0).slice(0, 5);
+  const weak = getTopicStats(progress)
+    .filter((topic) => topic.answers > 0 && (subjectScope === "all" || topic.subject === subjectScope))
+    .slice(0, 5);
+  const recommendation = adaptiveQueue(progress, 25, subjectScope)[0];
   const reviewed = Object.values(progress.cards).filter((card) => card.attempts > 0).length;
   const accuracy = pct(
     progress.answers.filter((answer) => answer.correct).length,
@@ -435,6 +596,11 @@ function Dashboard({ progress, navigate, subjectScope }: { progress: AppProgress
   };
   const portfolioLearning = subjectLearning("portfolio");
   const taxLearning = subjectLearning("tax");
+  const starterTopics = subjectScope === "portfolio"
+    ? ["CAPM, SML & Beta", "Diversification & Correlation", "Performance Measures"]
+    : subjectScope === "tax"
+      ? ["Tax Liability", "Partnership & Co-Entrepreneurship", "Trade Tax"]
+      : ["CAPM, SML & Beta", "Performance Measures", "Tax Liability"];
 
   return (
     <section className="page dashboard-page">
@@ -463,14 +629,14 @@ function Dashboard({ progress, navigate, subjectScope }: { progress: AppProgress
           <div className="panel-title"><span>◔</span><h2>{tr(language,"Themenstatus","Topic status")}</h2></div>
           {weak.length ? weak.map((item) => (
             <div className="topic-row" key={`${item.subject}-${item.topic}`}><span className={item.accuracy >= 75 ? "status-dot safe" : item.accuracy >= 55 ? "status-dot unsure" : "status-dot weak"} /><span>{item.topic}</span><strong>{item.accuracy}%</strong></div>
-          )) : <div className="starter-topics"><div><span className="status-dot weak" />CAPM, SML & Beta</div><div><span className="status-dot unsure" />Performance Measures</div><div><span className="status-dot safe" />Taxation basics</div></div>}
+          )) : <div className="starter-topics">{starterTopics.map((topic, index) => <div key={topic}><span className={index === 0 ? "status-dot weak" : index === 1 ? "status-dot unsure" : "status-dot safe"} />{topic}</div>)}</div>}
         </article>
 
         <article className="panel next-panel">
           <div className="panel-title"><span>▱</span><h2>{tr(language,"Nächste Lerneinheit","Next study session")}</h2></div>
-          <div className="recommendation"><span className="rec-icon">◎</span><div><strong>{weak[0]?.topic ?? "CAPM, SML & Beta"}</strong><span>{tr(language,"25 Min · 12 Karten · 8 Fragen","25 min · 12 cards · 8 questions")}</span></div></div>
-          <button className="primary-button" onClick={() => navigate("focus")}>{tr(language,"Jetzt optimal lernen","Start optimal session")} <span>→</span></button>
-          <button className="text-button" onClick={() => navigate("quiz")}>{tr(language,"Diagnosetest öffnen","Open assessment")}</button>
+          <div className="recommendation"><span className="rec-icon">◎</span><div><strong>{recommendation?.topic ?? (subjectScope === "tax" ? "Tax Liability" : "CAPM, SML & Beta")}</strong><span>{recommendation ? `${subjectName[recommendation.subject]} · ${recommendation.reason}` : tr(language,"25 Min · adaptive Auswahl","25 min · adaptive selection")}</span></div></div>
+          <button className="primary-button" onClick={onStartOptimal}>{tr(language,"Jetzt optimal lernen","Start optimal session")} <span>→</span></button>
+          <button className="text-button" onClick={() => recommendation ? navigate("quiz", { subject: recommendation.subject, topic: recommendation.topic }) : navigate("quiz")}>{tr(language,"MCQ & Diagnose öffnen","Open MCQ & assessment")}</button>
         </article>
       </div>
 
@@ -479,7 +645,7 @@ function Dashboard({ progress, navigate, subjectScope }: { progress: AppProgress
   );
 }
 
-function AdaptiveSession({ progress, setProgress, navigate }: { progress: AppProgress; setProgress: React.Dispatch<React.SetStateAction<AppProgress>>; navigate: Navigate }) {
+function AdaptiveSession({ progress, setProgress, navigate, onStartSession }: { progress: AppProgress; setProgress: React.Dispatch<React.SetStateAction<AppProgress>>; navigate: Navigate; onStartSession: (minutes: number, subject: PlanSubject) => void }) {
   const language = useLanguage();
   const [minutes, setMinutes] = useState(progress.settings.dailyMinutes || 30);
   const [subject, setSubject] = useState<PlanSubject>("all");
@@ -514,7 +680,7 @@ function AdaptiveSession({ progress, setProgress, navigate }: { progress: AppPro
       <div className="daily-targets">{(["portfolio","tax"] as Subject[]).map((value)=><label key={value}><span>{value==="portfolio"?"Portfolio":"Taxation"}</span><input type="number" min="5" max="90" step="5" value={progress.settings.dailyTargets?.[value]??20} onChange={(event)=>setProgress(current=>({...current,settings:{...current.settings,dailyTargets:{portfolio:current.settings.dailyTargets?.portfolio??20,tax:current.settings.dailyTargets?.tax??20,[value]:Number(event.target.value)}}}))}/><b>{tr(language,"Min","min")}</b></label>)}</div>
     </article>
     <div className="adaptive-layout"><div className="adaptive-queue">{queue.map((item,index)=><article key={`${item.subject}-${item.topic}`} className="adaptive-item"><span>{String(index+1).padStart(2,"0")}</span><div><small>{subjectName[item.subject]} · {item.status}</small><h3>{item.topic}</h3><p>{item.reason} · Mastery {item.mastery}% · {item.attempts} {tr(language,"Versuche an","attempts across")} {item.days} {tr(language,"Lerntag(en)","study day(s)")}</p></div><button onClick={()=>startItem(item)}>{tr(language,"Passend starten","Start selected topic")} →</button></article>)}</div>
-      <aside className="panel session-summary"><strong>{minutes}</strong><span>{tr(language,"Minuten Fokus","focus minutes")}</span><p>{queue.filter(item=>item.nextDueAt<=new Date().toISOString()).length} {tr(language,"fällige Themen","due topics")}, {queue.filter(item=>item.attempts===0).length} {tr(language,"Abdeckungslücken","coverage gaps")}.</p><div className="why-card"><b>{tr(language,"Warum Priorität 1?","Why priority 1?")}</b><p>{queue[0] ? tr(language, queue[0].reason, queue[0].reasonKey==="false-confidence"?"Correct false confidence":queue[0].reasonKey==="due"?"Review is due":queue[0].reasonKey==="coverage"?"Extend content coverage":"Close a high-value gap") : "–"}</p></div><button className="primary-button" onClick={()=>queue[0]&&startItem(queue[0])}>{tr(language,"Mit Priorität 1 beginnen","Start with priority 1")} →</button><button className="secondary-button check-button" onClick={()=>queue[0]&&navigate("quiz",{subject:queue[0].subject,topic:queue[0].topic})}>{tr(language,"Erfolgskontrolle mit neuer Variante","Check retention with a new variant")} →</button></aside></div>
+      <aside className="panel session-summary"><strong>{minutes}</strong><span>{tr(language,"Minuten Fokus","focus minutes")}</span><p>{queue.filter(item=>item.attempts>0&&item.nextDueAt<=new Date().toISOString()).length} {tr(language,"fällige Themen","due topics")}, {queue.filter(item=>item.attempts===0).length} {tr(language,"Abdeckungslücken","coverage gaps")}.</p><div className="why-card"><b>{tr(language,"Warum Priorität 1?","Why priority 1?")}</b><p>{queue[0] ? tr(language, queue[0].reason, queue[0].reasonKey==="false-confidence"?"Correct false confidence":queue[0].reasonKey==="due"?"Review is due":queue[0].reasonKey==="coverage"?"Learn something new":"Close a high-value gap") : "–"}</p></div><button className="primary-button" onClick={()=>onStartSession(minutes,subject)}>{tr(language,"Session mit Priorität 1 starten","Start session with priority 1")} →</button><button className="secondary-button check-button" onClick={()=>queue[0]&&navigate("quiz",{subject:queue[0].subject,topic:queue[0].topic})}>{tr(language,"Nur MCQ-Erfolgskontrolle","MCQ check only")} →</button></aside></div>
     <CoverageAndCountdown progress={progress} />
   </section>;
 }
@@ -549,7 +715,21 @@ function SubjectCard({ subject, score, mastery, mcqs, applications, priority = f
   );
 }
 
-function Cards({ progress, setProgress, initialSubject, initialTopic }: { progress: AppProgress; setProgress: React.Dispatch<React.SetStateAction<AppProgress>>; initialSubject: SubjectScope; initialTopic?: string }) {
+function Cards({
+  progress,
+  setProgress,
+  initialSubject,
+  initialTopic,
+  onSubjectChange,
+  onSessionTaskComplete,
+}: {
+  progress: AppProgress;
+  setProgress: React.Dispatch<React.SetStateAction<AppProgress>>;
+  initialSubject: SubjectScope;
+  initialTopic?: string;
+  onSubjectChange: (subject: Subject) => void;
+  onSessionTaskComplete?: () => void;
+}) {
   const language = useLanguage();
   const [subject, setSubject] = useState<Subject | "all">(initialSubject);
   const [topic, setTopic] = useState(initialTopic ?? "all");
@@ -557,6 +737,7 @@ function Cards({ progress, setProgress, initialSubject, initialTopic }: { progre
   const [favorites, setFavorites] = useState(false);
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
+  const [sessionReviews, setSessionReviews] = useState(0);
   const topics = [...new Set(flashcards.filter((card) => subject === "all" || card.subject === subject).map((card) => card.topic))];
   const filtered = flashcards.filter((card) => {
     const matchesSubject = subject === "all" || card.subject === subject;
@@ -568,6 +749,7 @@ function Cards({ progress, setProgress, initialSubject, initialTopic }: { progre
   const card = filtered[index % Math.max(1, filtered.length)];
   const review = (result: "known" | "uncertain" | "wrong") => {
     if (!card) return;
+    onSubjectChange(card.subject);
     const completedAt = new Date().toISOString();
     setProgress((current) => addLearningAttempt(
       { ...current, cards: { ...current.cards, [card.id]: reviewCard(current.cards[card.id], result) } },
@@ -589,6 +771,12 @@ function Cards({ progress, setProgress, initialSubject, initialTopic }: { progre
         difficulty: card.difficulty,
       },
     ));
+    const nextSessionReviews = sessionReviews + 1;
+    setSessionReviews(nextSessionReviews);
+    if (onSessionTaskComplete && nextSessionReviews >= Math.min(3, filtered.length)) {
+      onSessionTaskComplete();
+      return;
+    }
     setFlipped(false);
     setIndex((value) => (value + 1) % Math.max(1, filtered.length));
   };
@@ -605,7 +793,7 @@ function Cards({ progress, setProgress, initialSubject, initialTopic }: { progre
       <PageHeading eyebrow="SPACED REPETITION" title={tr(language,"Karteikarten","Flashcards")} description={tr(language,`${flashcards.filter((item) => item.subject === "portfolio").length} Portfolio- und ${flashcards.filter((item) => item.subject === "tax").length} Taxation-Karten mit Quellenreferenz.`,`${flashcards.filter((item) => item.subject === "portfolio").length} portfolio and ${flashcards.filter((item) => item.subject === "tax").length} taxation cards with source references.`)} />
       {initialTopic && <div className="active-learning-target"><span>◎</span><div><small>{tr(language,"AUS „OPTIMAL LERNEN“ VORAUSGEWÄHLT","PRESELECTED FROM OPTIMAL SESSION")}</small><strong>{initialSubject === "portfolio" ? "Portfolio Management" : "Taxation"} · {initialTopic}</strong></div></div>}
       <div className="toolbar">
-        <select value={subject} onChange={(event) => { setSubject(event.target.value as Subject | "all"); setTopic("all"); setIndex(0); setFlipped(false); }}><option value="portfolio">Portfolio Management</option><option value="tax">Taxation</option><option value="all">{tr(language,"Beide Fächer","Both subjects")}</option></select>
+        <select value={subject} onChange={(event) => { const next = event.target.value as Subject | "all"; setSubject(next); if (next !== "all") onSubjectChange(next); setTopic("all"); setIndex(0); setFlipped(false); }}><option value="portfolio">Portfolio Management</option><option value="tax">Taxation</option><option value="all">{tr(language,"Beide Fächer","Both subjects")}</option></select>
         <select value={topic} onChange={(event) => { setTopic(event.target.value); setIndex(0); setFlipped(false); }}><option value="all">{tr(language,"Alle Themen","All topics")}</option>{topics.map((item) => <option key={item}>{item}</option>)}</select>
         <input value={query} onChange={(event) => { setQuery(event.target.value); setIndex(0); setFlipped(false); }} placeholder={tr(language,"Karten durchsuchen …","Search cards …")} />
         <button className={favorites ? "filter-button active" : "filter-button"} onClick={() => { setFavorites((value) => !value); setIndex(0); setFlipped(false); }}>★ {tr(language,"Favoriten","Favourites")}</button>
@@ -613,7 +801,7 @@ function Cards({ progress, setProgress, initialSubject, initialTopic }: { progre
       {card ? (
         <div className="study-layout">
           <div className="card-stage">
-            <div className="card-meta"><span>{subjectName[card.subject]}</span><strong>{index + 1} / {filtered.length}</strong><span>Box {progress.cards[card.id]?.box ?? 1}</span></div>
+            <div className="card-meta"><span>{subjectName[card.subject]}</span><strong>{onSessionTaskComplete ? `${sessionReviews}/${Math.min(3, filtered.length)} Session-Karten` : `${index + 1} / ${filtered.length}`}</strong><span>Box {progress.cards[card.id]?.box ?? 1}</span></div>
             <button className={flipped ? "flashcard flipped" : "flashcard"} onClick={() => setFlipped((value) => !value)}>
               <span className="card-label">{flipped ? tr(language,"ANTWORT","ANSWER") : card.topic.toUpperCase()}</span>
               <div>{flipped ? <><p className="card-answer">{card.back}</p>{language === "de" && card.helpDe && <p className="german-help">Verständnishilfe: {card.helpDe}</p>}</> : <><h2>{card.front}</h2>{language === "de" && card.helpDe && <p className="german-help">Deutsch: {card.helpDe}</p>}</>}</div>
@@ -629,7 +817,23 @@ function Cards({ progress, setProgress, initialSubject, initialTopic }: { progre
   );
 }
 
-function Quiz({ setProgress, preset, initialSubject, initialTopic, onPresetApplied }: { setProgress: React.Dispatch<React.SetStateAction<AppProgress>>; preset?: "tax-diagnostic"; initialSubject: SubjectScope; initialTopic?: string; onPresetApplied: () => void }) {
+function Quiz({
+  setProgress,
+  preset,
+  initialSubject,
+  initialTopic,
+  onPresetApplied,
+  onSubjectChange,
+  onSessionTaskComplete,
+}: {
+  setProgress: React.Dispatch<React.SetStateAction<AppProgress>>;
+  preset?: "tax-diagnostic";
+  initialSubject: SubjectScope;
+  initialTopic?: string;
+  onPresetApplied: () => void;
+  onSubjectChange: (subject: Subject) => void;
+  onSessionTaskComplete?: () => void;
+}) {
   const language = useLanguage();
   const [subject, setSubject] = useState<Subject | "all">(preset === "tax-diagnostic" ? "tax" : initialSubject);
   const [topic, setTopic] = useState(initialTopic ?? "all");
@@ -644,6 +848,7 @@ function Quiz({ setProgress, preset, initialSubject, initialTopic, onPresetAppli
   const [confidence, setConfidence] = useState<Confidence>("medium");
   const [errorType, setErrorType] = useState<ErrorType>("Wissenslücke");
   const started = useRef(0);
+  const autoStarted = useRef(false);
   const question = session[index];
   const availableQuestions = quizQuestions.filter((item) =>
     (subject === "all" || item.subject === subject)
@@ -652,18 +857,27 @@ function Quiz({ setProgress, preset, initialSubject, initialTopic, onPresetAppli
     && (diagnostic || difficulty === "all" || item.difficulty === difficulty)
   );
 
-  const start = () => {
+  const start = (shortSession = false) => {
     onPresetApplied();
     const pool = availableQuestions;
     if (!pool.length) return;
     const broad = [...new Map(shuffle(pool).map((item) => [`${item.subject}-${item.topic}`, item])).values()];
-    const target = diagnostic ? (subject === "all" ? 18 : 12) : 12;
+    const target = shortSession ? 4 : diagnostic ? (subject === "all" ? 18 : 12) : 12;
     setSession([...broad, ...shuffle(pool.filter((item) => !broad.includes(item)))].slice(0, target).map(shuffleQuestionOptions));
     setSessionResults([]); setShowResult(false);
     setIndex(0); setAnswer(undefined); setChecked(false); started.current = Date.now();
   };
+  useEffect(() => {
+    if (!onSessionTaskComplete || !initialTopic || autoStarted.current) return;
+    autoStarted.current = true;
+    const frame = window.requestAnimationFrame(() => start(true));
+    return () => window.cancelAnimationFrame(frame);
+  // The component is keyed by the target; it must auto-start only once for that key.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialTopic, onSessionTaskComplete]);
   const check = () => {
     if (!question || answer === undefined) return;
+    onSubjectChange(question.subject);
     const correct = isCorrect(question, answer);
     const record: AnswerRecord = { id: uid("answer"), questionId: question.id, subject: question.subject, topic: question.topic, correct, durationMs: Date.now() - started.current, confidence, errorType: correct ? undefined : errorType, answeredAt: new Date().toISOString(), difficulty: question.difficulty };
     setProgress((current) => addLearningAttempt(addAnswer(current, record), {
@@ -687,7 +901,15 @@ function Quiz({ setProgress, preset, initialSubject, initialTopic, onPresetAppli
     setChecked(true);
   };
   const next = () => {
-    if (index >= session.length - 1) { setSession([]); setShowResult(true); return; }
+    if (index >= session.length - 1) {
+      if (onSessionTaskComplete) {
+        onSessionTaskComplete();
+        return;
+      }
+      setSession([]);
+      setShowResult(true);
+      return;
+    }
     setIndex((value) => value + 1); setAnswer(undefined); setChecked(false); setConfidence("medium"); started.current = Date.now();
   };
 
@@ -712,7 +934,7 @@ function Quiz({ setProgress, preset, initialSubject, initialTopic, onPresetAppli
   if (!question) return (
     <section className="page"><PageHeading eyebrow={tr(language,"AKTIVES ABRUFEN","ACTIVE RECALL")} title="Quiz" description={tr(language,"Prüfungsfragen mit deutscher Verständnishilfe, sofortigem Feedback und persönlichem Fehlerprotokoll.","Exam questions with immediate feedback and a personal error log.")} />
       {initialTopic && <div className="active-learning-target"><span>◎</span><div><small>{tr(language,"AUS „OPTIMAL LERNEN“ VORAUSGEWÄHLT","PRESELECTED FROM OPTIMAL SESSION")}</small><strong>{subject === "portfolio" ? "Portfolio Management" : "Taxation"} · {initialTopic}</strong></div></div>}
-      <div className="setup-grid three"><article className={`setup-card ${subject === "portfolio" ? "selected" : ""}`} onClick={() => { setSubject("portfolio"); setTopic("all"); }}><span>◎</span><h2>Portfolio Management</h2><p>{quizQuestions.filter((item) => item.subject === "portfolio").length} geprüfte Fragen</p></article><article className={`setup-card ${subject === "tax" ? "selected tax" : ""}`} onClick={() => { setSubject("tax"); setTopic("all"); }}><span>§</span><h2>Taxation</h2><p>{quizQuestions.filter((item) => item.subject === "tax").length} geprüfte Fragen</p></article><article className={`setup-card ${subject === "all" ? "selected combined" : ""}`} onClick={() => { setSubject("all"); setTopic("all"); setDiagnostic(true); }}><span>◫</span><h2>Gesamtdiagnose</h2><p>18 Fragen aus beiden Fächern</p></article></div>
+      <div className="setup-grid three"><article className={`setup-card ${subject === "portfolio" ? "selected" : ""}`} onClick={() => { setSubject("portfolio"); onSubjectChange("portfolio"); setTopic("all"); }}><span>◎</span><h2>Portfolio Management</h2><p>{quizQuestions.filter((item) => item.subject === "portfolio").length} geprüfte Fragen</p></article><article className={`setup-card ${subject === "tax" ? "selected tax" : ""}`} onClick={() => { setSubject("tax"); onSubjectChange("tax"); setTopic("all"); }}><span>§</span><h2>Taxation</h2><p>{quizQuestions.filter((item) => item.subject === "tax").length} geprüfte Fragen</p></article><article className={`setup-card ${subject === "all" ? "selected combined" : ""}`} onClick={() => { setSubject("all"); setTopic("all"); setDiagnostic(true); }}><span>◫</span><h2>Gesamtdiagnose</h2><p>18 Fragen aus beiden Fächern</p></article></div>
       <label className="quiz-topic-filter"><span>{tr(language,"Thema für diese Session","Topic for this session")}</span><select value={topic} onChange={(event) => setTopic(event.target.value)}><option value="all">{tr(language,"Alle Themen des Fachs","All subject topics")}</option>{[...new Set(quizQuestions.filter((item) => subject === "all" || item.subject === subject).map((item) => item.topic))].map((item) => <option key={item} value={item}>{item}</option>)}</select><small>{topic === "all" ? tr(language,"Die Session wird breit über das Fach gestreut.","The session will span the subject.") : tr(language,`Alle Fragen stammen aus „${topic}“.`,`Every question will focus on “${topic}”.`)}</small></label>
       <div className="difficulty-panel panel">
         <div><span className="question-type">{tr(language,"SCHWIERIGKEIT","DIFFICULTY")}</span><h2>{tr(language,"An deinem Lernstand trainieren","Train at your current level")}</h2><p>{tr(language,"Basis prüft Begriffe und Formeln, Anwendung verlangt die richtige Methode, Transfer kombiniert mehrere Schritte und typische Fallen.","Foundation tests concepts and formulas, Application requires the correct method, and Transfer combines several steps and common traps.")}</p></div>
@@ -728,7 +950,7 @@ function Quiz({ setProgress, preset, initialSubject, initialTopic, onPresetAppli
           })}
         </div>
       </div>
-      <div className="quiz-start panel"><label className="switch-row"><input type="checkbox" checked={diagnostic} onChange={(event) => setDiagnostic(event.target.checked)} /><span><strong>{tr(language,"Adaptiver Diagnosetest","Adaptive diagnostic")}</strong><small>{availableQuestions.length ? tr(language,`${Math.min(subject === "all" ? 18 : 12, availableQuestions.length)} passende Fragen mit Sicherheitsabgleich`,`${Math.min(subject === "all" ? 18 : 12, availableQuestions.length)} matching questions with confidence calibration`) : tr(language,"Für diese Kombination gibt es keine Diagnosefrage. Deaktiviere Diagnose oder wähle „Alle Themen“.","No diagnostic question matches this selection. Disable diagnostic or choose “All topics”.")}</small></span></label><button className="primary-button" disabled={!availableQuestions.length} onClick={start}>{diagnostic ? tr(language,"Diagnosetest starten","Start diagnostic") : tr(language,`${Math.min(12, availableQuestions.length)} Fragen starten`,`Start ${Math.min(12, availableQuestions.length)} questions`)} →</button></div>
+      <div className="quiz-start panel"><label className="switch-row"><input type="checkbox" checked={diagnostic} onChange={(event) => setDiagnostic(event.target.checked)} /><span><strong>{tr(language,"Adaptiver Diagnosetest","Adaptive diagnostic")}</strong><small>{availableQuestions.length ? tr(language,`${Math.min(subject === "all" ? 18 : 12, availableQuestions.length)} passende Fragen mit Sicherheitsabgleich`,`${Math.min(subject === "all" ? 18 : 12, availableQuestions.length)} matching questions with confidence calibration`) : tr(language,"Für diese Kombination gibt es keine Diagnosefrage. Deaktiviere Diagnose oder wähle „Alle Themen“.","No diagnostic question matches this selection. Disable diagnostic or choose “All topics”.")}</small></span></label><button className="primary-button" disabled={!availableQuestions.length} onClick={() => start()}>{diagnostic ? tr(language,"Diagnosetest starten","Start diagnostic") : tr(language,`${Math.min(12, availableQuestions.length)} Fragen starten`,`Start ${Math.min(12, availableQuestions.length)} questions`)} →</button></div>
     </section>
   );
 
@@ -747,8 +969,21 @@ function Quiz({ setProgress, preset, initialSubject, initialTopic, onPresetAppli
 }
 
 type TrainerMode = "calculation" | "tax-case" | "formula" | "lab" | "academy" | "tax-lab" | "tax-prep";
+type TrainingRunResult = { id: string; topic: string; score: number; maxScore: number; errors: string[] };
 
-function SubjectTrainer({ progress, setProgress, onStartTaxDiagnostic }: { progress: AppProgress; setProgress: React.Dispatch<React.SetStateAction<AppProgress>>; onStartTaxDiagnostic: () => void }) {
+function SubjectTrainer({
+  progress,
+  setProgress,
+  navigate,
+  onSubjectChange,
+  onStartTaxDiagnostic,
+}: {
+  progress: AppProgress;
+  setProgress: React.Dispatch<React.SetStateAction<AppProgress>>;
+  navigate: Navigate;
+  onSubjectChange: (subject: Subject) => void;
+  onStartTaxDiagnostic: () => void;
+}) {
   const [mode, setMode] = useState<TrainerMode>();
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
   const [index, setIndex] = useState(0);
@@ -759,14 +994,27 @@ function SubjectTrainer({ progress, setProgress, onStartTaxDiagnostic }: { progr
   const [labIndex, setLabIndex] = useState(0);
   const [taxLabCases, setTaxLabCases] = useState<TaxCase[]>([]);
   const [taxLabIndex, setTaxLabIndex] = useState(0);
+  const [runResults, setRunResults] = useState<TrainingRunResult[]>([]);
+  const [runBaseline, setRunBaseline] = useState(0);
   const started = useRef(0);
   const labStarted = useRef(0);
   const question = questions[index];
 
   const startMode = (next: TrainerMode) => {
-    if (next === "academy" || next === "tax-prep") { setMode(next); return; }
-    if (next === "lab") { setMode(next); setLabTasks(createLabTasks()); setLabIndex(0); labStarted.current = Date.now(); return; }
-    if (next === "tax-lab") { setMode(next); setTaxLabCases(shuffle(taxCases)); setTaxLabIndex(0); labStarted.current = Date.now(); return; }
+    if (next === "academy") { onSubjectChange("portfolio"); setMode(next); return; }
+    if (next === "tax-prep") { onSubjectChange("tax"); setMode(next); return; }
+    if (next === "lab") {
+      onSubjectChange("portfolio");
+      setMode(next); setLabTasks(createLabTasks()); setLabIndex(0); setRunResults([]);
+      setRunBaseline(averageSubjectMastery(progress, "portfolio")); labStarted.current = Date.now(); return;
+    }
+    if (next === "tax-lab") {
+      onSubjectChange("tax");
+      setMode(next); setTaxLabCases(shuffle(taxCases)); setTaxLabIndex(0); setRunResults([]);
+      setRunBaseline(averageSubjectMastery(progress, "tax")); labStarted.current = Date.now(); return;
+    }
+    if (next === "calculation") onSubjectChange("portfolio");
+    if (next === "tax-case") onSubjectChange("tax");
     const filtered = quizQuestions.filter((item) => next === "calculation"
       ? item.subject === "portfolio" && item.type === "calculation"
       : next === "tax-case"
@@ -776,6 +1024,7 @@ function SubjectTrainer({ progress, setProgress, onStartTaxDiagnostic }: { progr
   };
   const check = () => {
     if (!question || answer === undefined) return;
+    onSubjectChange(question.subject);
     const correct = isCorrect(question, answer);
     const errorType: ErrorType = mode === "calculation" ? "Rechenfehler" : mode === "tax-case" ? "Rechtsfolge falsch" : question.subject === "tax" ? "Norm nicht gefunden" : "falsche Formel";
     const record: AnswerRecord = { id: uid("trainer"), questionId: question.id, subject: question.subject, topic: question.topic, correct, durationMs: Date.now() - started.current, confidence, errorType: correct ? undefined : errorType, answeredAt: new Date().toISOString() };
@@ -784,13 +1033,21 @@ function SubjectTrainer({ progress, setProgress, onStartTaxDiagnostic }: { progr
       subject: question.subject, topic: question.topic, mode: "quiz", stage: "application",
       score: correct ? question.points : 0, maxScore: question.points, durationMs: record.durationMs,
       confidence, errorTypes: correct ? [] : [errorType], hintsUsed: 0, completedAt: record.answeredAt,
+      difficulty: question.difficulty,
     }));
     setChecked(true);
   };
   const next = () => { setIndex((value) => (value + 1) % Math.max(1, questions.length)); setAnswer(undefined); setChecked(false); setConfidence("medium"); started.current = Date.now(); };
 
-  if (mode === "academy") return <PortfolioAcademy progress={progress} setProgress={setProgress} onExit={() => setMode(undefined)} />;
-  if (mode === "tax-prep") return <TaxExamPreparation onExit={() => setMode(undefined)} onStartDiagnostic={onStartTaxDiagnostic} />;
+  if (mode === "academy") return <PortfolioAcademy progress={progress} setProgress={setProgress} onExit={() => setMode(undefined)} onStartQuiz={(topic) => navigate("quiz", { subject: "portfolio", topic })} />;
+  if (mode === "tax-prep") return <TaxExamPreparation progress={progress} setProgress={setProgress} onExit={() => setMode(undefined)} onStartDiagnostic={onStartTaxDiagnostic} />;
+
+  if (mode === "lab" && labTasks.length > 0 && labIndex >= labTasks.length) {
+    return <TrainingRunSummary subject="portfolio" label="Portfolio-Rechenlabor" results={runResults} baseline={runBaseline} progress={progress} navigate={navigate} onBack={() => setMode(undefined)} />;
+  }
+  if (mode === "tax-lab" && taxLabCases.length > 0 && taxLabIndex >= taxLabCases.length) {
+    return <TrainingRunSummary subject="tax" label="Taxation-Falllabor" results={runResults} baseline={runBaseline} progress={progress} navigate={navigate} onBack={() => setMode(undefined)} />;
+  }
 
   if (mode === "lab" && labTasks[labIndex]) return <CalculationLab key={labTasks[labIndex].id} task={labTasks[labIndex]} position={labIndex} total={labTasks.length} confidence={confidence} setConfidence={setConfidence} onExit={() => setMode(undefined)} onComplete={(errors) => {
     const task = labTasks[labIndex]; const correct = errors.length === 0;
@@ -801,11 +1058,11 @@ function SubjectTrainer({ progress, setProgress, onStartTaxDiagnostic }: { progr
       score: Math.max(0, 5 - errors.length), maxScore: 5, durationMs: record.durationMs,
       confidence, errorTypes: correct ? [] : [record.errorType!], hintsUsed: 0, completedAt: record.answeredAt,
     }));
-    setLabTasks((current) => correct ? current : [...current, createLabTasks(Date.now()+labIndex).find((item) => item.id === task.id)!]);
+    setRunResults((current) => [...current, { id: task.id, topic: task.topic, score: Math.max(0, 5 - errors.length), maxScore: 5, errors }]);
     setLabIndex((value) => value + 1); setConfidence("medium"); labStarted.current = Date.now();
   }} />;
 
-  if (mode === "tax-lab" && taxLabCases[taxLabIndex]) return <TaxCaseLab key={taxLabCases[taxLabIndex].id} taxCase={taxLabCases[taxLabIndex]} position={taxLabIndex} total={taxLabCases.length} confidence={confidence} setConfidence={setConfidence} onExit={() => setMode(undefined)} onComplete={({ score, firstError, writtenResponse, selfScore }) => {
+  if (mode === "tax-lab" && taxLabCases[taxLabIndex]) return <TaxCaseLab key={taxLabCases[taxLabIndex].id} progress={progress} setProgress={setProgress} taxCase={taxLabCases[taxLabIndex]} position={taxLabIndex} total={taxLabCases.length} confidence={confidence} setConfidence={setConfidence} onExit={() => setMode(undefined)} onComplete={({ score, firstError, writtenResponse, selfScore }) => {
     const item = taxLabCases[taxLabIndex];
     const stepMaxScore = item.steps.reduce((sum, step) => sum + step.points, 0);
     const maxScore = stepMaxScore + 2;
@@ -821,7 +1078,7 @@ function SubjectTrainer({ progress, setProgress, onStartTaxDiagnostic }: { progr
       errorTypes: record.errorType ? [record.errorType] : [], hintsUsed: 0, completedAt: record.answeredAt,
       writtenResponse, selfScore,
     }));
-    setTaxLabCases((current) => correct ? current : [...current, item]);
+    setRunResults((current) => [...current, { id: item.id, topic: item.topic, score: totalScore, maxScore, errors: errorType ? [errorType] : [] }]);
     setTaxLabIndex((value) => value + 1); setConfidence("medium"); labStarted.current = Date.now();
   }} />;
 
@@ -848,7 +1105,41 @@ function SubjectTrainer({ progress, setProgress, onStartTaxDiagnostic }: { progr
   </section>;
 }
 
-function TaxExamPreparation({ onExit, onStartDiagnostic }: { onExit: () => void; onStartDiagnostic: () => void }) {
+function TrainingRunSummary({
+  subject,
+  label,
+  results,
+  baseline,
+  progress,
+  navigate,
+  onBack,
+}: {
+  subject: Subject;
+  label: string;
+  results: TrainingRunResult[];
+  baseline: number;
+  progress: AppProgress;
+  navigate: Navigate;
+  onBack: () => void;
+}) {
+  const language = useLanguage();
+  const score = results.reduce((sum, item) => sum + item.score, 0);
+  const maxScore = results.reduce((sum, item) => sum + item.maxScore, 0);
+  const errors = results.flatMap((item) => item.errors);
+  const currentMastery = averageSubjectMastery(progress, subject);
+  const next = adaptiveQueue(progress, progress.settings.dailyMinutes, subject)[0];
+  const continueLearning = () => next
+    ? navigate(next.attempts === 0 ? "cards" : "quiz", { subject: next.subject, topic: next.topic })
+    : navigate("focus");
+  return <section className="page session-finish-page">
+    <PageHeading eyebrow={`${label.toUpperCase()} · ABGESCHLOSSEN`} title={tr(language, "Lernstrecke ausgewertet", "Training run graded")} description={tr(language, "Punkte, Kompetenzänderung und Fehler sind gespeichert. Die nächste Empfehlung berücksichtigt diesen Lauf bereits.", "Points, mastery change and errors are saved. The next recommendation already includes this run.")} />
+    <div className="session-finish-grid"><article><strong>{score}/{maxScore}</strong><span>{tr(language, "Punkte", "points")}</span></article><article><strong>{baseline}% → {currentMastery}%</strong><span>{tr(language, "Fachkompetenz", "subject mastery")}</span></article><article><strong>{errors.length}</strong><span>{tr(language, "Fehlerstellen", "error points")}</span></article></div>
+    <div className="panel session-error-list"><h2>{errors.length ? tr(language, "Gezielt nacharbeiten", "Targeted repair") : tr(language, "Stabiler Abschluss", "Stable finish")}</h2><p>{errors.length ? [...new Set(errors)].join(" · ") : tr(language, "Alle bewerteten Schritte wurden sicher gelöst.", "All graded steps were solved securely.")}</p>{next && <small>{tr(language, "Nächste Empfehlung", "Next recommendation")}: {subjectName[next.subject]} · {next.topic}</small>}</div>
+    <div className="session-finish-actions"><button className="primary-button" onClick={continueLearning}>{tr(language, "Weiterlernen", "Continue learning")} →</button><button className="secondary-button" onClick={() => navigate("dashboard")}>{tr(language, "Zum Dashboard", "Dashboard")}</button><button className="text-button" onClick={onBack}>{tr(language, "Trainingsarten", "Training modes")}</button></div>
+  </section>;
+}
+
+function TaxExamPreparation({ progress, setProgress, onExit, onStartDiagnostic }: { progress: AppProgress; setProgress: React.Dispatch<React.SetStateAction<AppProgress>>; onExit: () => void; onStartDiagnostic: () => void }) {
   const language = useLanguage();
   const de = language === "de";
   const [chapter, setChapter] = useState(0);
@@ -936,7 +1227,7 @@ function TaxExamPreparation({ onExit, onStartDiagnostic }: { onExit: () => void;
       <nav className="tax-prep-nav" aria-label={de ? "Kapitel" : "Chapters"}>{chapters.map((entry,index)=><button key={entry.title} className={index===chapter?"active":index<chapter?"visited":""} onClick={()=>setChapter(index)}><span>{index<chapter?"✓":index+1}</span><div><small>{entry.kicker}</small><strong>{entry.title}</strong></div></button>)}</nav>
       <article className="tax-prep-lesson">
         <span className="question-type">{item.kicker}</span><h1>{item.title}</h1><p className="tax-prep-summary">{item.summary}</p>
-        <ExamAidPanel subject="tax" language={language} />
+        <ExamAidPanel subject="tax" language={language} progress={progress} setProgress={setProgress} />
         <div className="tax-prep-schema"><h2>{de ? "Prüfungsschema" : "Exam sequence"}</h2><ol>{item.steps.map(step=><li key={step}>{step}</li>)}</ol></div>
         <div className="tax-prep-example"><span>∑</span><div><h3>{de ? "Vorgerechnetes Beispiel" : "Worked example"}</h3><p>{item.example}</p></div></div>
         <aside className="tax-prep-trap"><b>{de ? "Typischer Punktverlust" : "Typical lost marks"}</b><p>{item.trap}</p></aside>
@@ -948,7 +1239,8 @@ function TaxExamPreparation({ onExit, onStartDiagnostic }: { onExit: () => void;
   </section>;
 }
 
-function TaxCaseLab({ taxCase, position, total, confidence, setConfidence, onExit, onComplete }: {
+function TaxCaseLab({ progress, setProgress, taxCase, position, total, confidence, setConfidence, onExit, onComplete }: {
+  progress: AppProgress; setProgress: React.Dispatch<React.SetStateAction<AppProgress>>;
   taxCase: TaxCase; position: number; total: number; confidence: Confidence;
   setConfidence: (value: Confidence) => void; onExit: () => void;
   onComplete: (result: { score: number; firstError?: TaxCase["steps"][number]["id"]; writtenResponse: string; selfScore: number }) => void;
@@ -980,7 +1272,7 @@ function TaxCaseLab({ taxCase, position, total, confidence, setConfidence, onExi
     <div className="tax-case-progress">{taxCase.steps.map((item, index) => <span key={item.id} className={`${index < stepIndex ? (results[index]?.correct ? "passed" : "missed") : ""} ${index === stepIndex && !done ? "active" : ""}`}><b>{index + 1}</b><small>{["Steuerart","Subjekt","Norm","Rechnung","Ergebnis"][index]}</small></span>)}</div>
     <article className="question-card lab-card tax-case-card">
       <div className="lab-title"><span className="question-type">TAXATION FALLLABOR · {taxCase.topic}</span><h1>{taxCase.title}</h1><div className="case-facts"><b>Facts</b><p>{taxCase.facts}</p></div></div>
-      <ExamAidPanel subject="tax" language={language} />
+      <ExamAidPanel subject="tax" language={language} progress={progress} setProgress={setProgress} />
       {!done && <>
         <div className="case-score"><span>Schritt {stepIndex + 1} von {taxCase.steps.length}</span><b>{score} / {maxScore} Punkte bisher</b></div>
         <h2>{step.title}</h2><p className="stage-intro">{step.prompt}</p>
@@ -1037,7 +1329,7 @@ function CalculationLab({ task, position, total, confidence, setConfidence, onEx
       {stage === "prediction" && <><h2>3. Was erwartest du vor dem Rechnen?</h2><p className="stage-intro">Die Prognose ist dein Plausibilitätscheck gegen Taschenrechner- und Vorzeichenfehler.</p><div className="options">{task.predictionOptions.map((item,i)=><button key={item} disabled={checked} className={`${prediction===i?"selected":""} ${checked&&i===0?"correct":""} ${checked&&prediction===i&&i!==0?"incorrect":""}`} onClick={()=>setPrediction(i)}><span>{String.fromCharCode(65+i)}</span>{item}</button>)}</div>{checked&&<div className={prediction===0?"feedback correct-feedback":"feedback wrong-feedback"}><p>{task.prediction}</p></div>}<div className="question-actions">{checked?<button className="primary-button" onClick={()=>advance("steps")}>Jetzt rechnen →</button>:<button className="primary-button" disabled={prediction===undefined} onClick={()=>mark("prediction",prediction===0)}>Prognose prüfen</button>}</div></>}
       {stage === "steps" && <><h2>4. Rechenweg in kontrollierten Schritten</h2><div className="formula-strip">{task.formula}</div><div className="step-inputs">{task.steps.map((item,i)=><label key={item.label} className={checked?(stepCorrect[i]?"step-right":"step-wrong"):""}><span><b>{i+1}. {item.label}</b>{hint===i&&<small>{item.hint}</small>}</span><span className="number-field"><input inputMode="decimal" value={stepValues[i]} disabled={checked} onChange={e=>setStepValues(values=>values.map((v,x)=>x===i?e.target.value:v))} placeholder="Dein Wert"/><i>{item.unit}</i></span>{!checked&&<button type="button" className="hint-button" onClick={()=>setHint(i)}>Hinweis</button>}{checked&&!stepCorrect[i]&&<em>Richtig: {String(item.answer).replace(".",",")} {item.unit}</em>}</label>)}</div>{checked&&<div className={stepCorrect.every(Boolean)?"feedback correct-feedback":"feedback wrong-feedback"}><b>{stepCorrect.every(Boolean)?"Rechenweg vollständig korrekt.":"Der genaue Fehlerpunkt ist markiert."}</b><p>{task.trap}</p></div>}<div className="question-actions">{checked?<button className="primary-button" onClick={()=>advance("interpretation")}>Ergebnis deuten →</button>:<button className="primary-button" disabled={stepValues.some(v=>!v.trim())} onClick={()=>mark("steps",stepCorrect.every(Boolean))}>Rechenweg prüfen</button>}</div></>}
       {stage === "interpretation" && <><h2>5. Was bedeutet das Ergebnis?</h2><div className="options">{task.interpretationOptions.map((item,i)=><button key={item} disabled={checked} className={`${interpretation===i?"selected":""} ${checked&&i===0?"correct":""} ${checked&&interpretation===i&&i!==0?"incorrect":""}`} onClick={()=>setInterpretation(i)}><span>{String.fromCharCode(65+i)}</span>{item}</button>)}</div>{checked&&<div className={interpretation===0?"feedback correct-feedback":"feedback wrong-feedback"}><p>{task.interpretation}</p></div>}<div className="question-actions">{checked?<button className="primary-button" onClick={()=>advance("result")}>Auswertung →</button>:<button className="primary-button" disabled={interpretation===undefined} onClick={()=>mark("interpretation",interpretation===0)}>Interpretation prüfen</button>}</div></>}
-      {stage === "result" && <div className="lab-result"><span className={errors.length?"result-ring needs-work":"result-ring mastered"}>{5-errors.length}<small>/ 5</small></span><h2>{errors.length?"Rechenstrecke abgeschlossen – gezielte Wiederholung eingeplant.":"Rechenstrecke sicher beherrscht."}</h2><p>{errors.length?`Noch offen: ${errors.map(e=>({formula:"Formelwahl",prediction:"Plausibilität",steps:"Rechenweg",interpretation:"Deutung"}[e])).join(", ")}. Eine neue Zahlenvariante dieses Themas wird hinten angefügt.`:"Du hast Modellwahl, Plausibilität, Rechnung und Interpretation verbunden."}</p><label className="exam-confidence">Wie sicher fühltest du dich?<select value={confidence} onChange={e=>setConfidence(e.target.value as Confidence)}><option value="low">niedrig</option><option value="medium">mittel</option><option value="high">hoch</option></select></label><SourceBadge source={task.source}/><button className="primary-button" onClick={()=>onComplete(errors)}>Nächste Rechenstrecke →</button></div>}
+      {stage === "result" && <div className="lab-result"><span className={errors.length?"result-ring needs-work":"result-ring mastered"}>{5-errors.length}<small>/ 5</small></span><h2>{errors.length?"Rechenstrecke abgeschlossen – gezielte Wiederholung eingeplant.":"Rechenstrecke sicher beherrscht."}</h2><p>{errors.length?`Noch offen: ${errors.map(e=>({formula:"Formelwahl",prediction:"Plausibilität",steps:"Rechenweg",interpretation:"Deutung"}[e])).join(", ")}. Eine neue Zahlenvariante wird über den adaptiven Plan eingeplant.`:"Du hast Modellwahl, Plausibilität, Rechnung und Interpretation verbunden."}</p><label className="exam-confidence">Wie sicher fühltest du dich?<select value={confidence} onChange={e=>setConfidence(e.target.value as Confidence)}><option value="low">niedrig</option><option value="medium">mittel</option><option value="high">hoch</option></select></label><SourceBadge source={task.source}/><button className="primary-button" onClick={()=>onComplete(errors)}>{position >= total - 1 ? tr(language,"Rechenlabor abschließen","Finish calculation lab") : tr(language,"Nächste Rechenstrecke","Next calculation")} →</button></div>}
     </article>
   </section>;
 }
@@ -1113,17 +1405,32 @@ function DailyPlan({ progress, navigate }: { progress: AppProgress; navigate: Na
   </section>;
 }
 
-function Models() {
-  const [subject, setSubject] = useState<Subject>("portfolio");
-  const [open, setOpen] = useState(modelOverviews[0]?.id ?? "");
+function modelQuizTopic(id: string, title: string) {
+  if (["m-sharpe", "m-alpha"].includes(id)) return "Performance Measures";
+  if (id === "m-event" || id === "m-emh") return "EMH & Event Study";
+  if (id === "t-income") return "Seven Income Categories";
+  if (id === "t-liability") return "Tax Liability";
+  if (id === "t-principles" || id === "t-coentrepreneur") return "Partnership & Co-Entrepreneurship";
+  if (id === "t-sbv") return "Special Business Assets";
+  if (id === "t-cit") return "Corporate Income Tax";
+  if (id === "t-trade") return "Trade Tax";
+  if (id === "t-dividend") return "Dividends & Capital Gains";
+  if (id === "t-split") return "Business Split";
+  if (id === "t-legalform") return "Legal-Form Comparison";
+  return title;
+}
+
+function Models({ initialSubject, navigate, onSubjectChange }: { initialSubject: Subject; navigate: Navigate; onSubjectChange: (subject: Subject) => void }) {
+  const [subject, setSubject] = useState<Subject>(initialSubject);
+  const [open, setOpen] = useState(modelOverviews.find((item) => item.subject === initialSubject)?.id ?? "");
   return <section className="page"><PageHeading eyebrow="MODELLE & ÜBERSICHTEN" title="Prüfungswissen als Ablauf" description="Kompakte, quellengebundene Übersichten – für Verständnis und Wiederholung, nicht als Ersatz für die Originalunterlagen." />
-    <div className="subject-tabs"><button className={subject === "portfolio" ? "active" : ""} onClick={() => setSubject("portfolio")}>Portfolio Management</button><button className={subject === "tax" ? "active" : ""} onClick={() => setSubject("tax")}>Taxation</button></div>
-    <div className="models-grid">{modelOverviews.filter((item) => item.subject === subject).map((model) => <article className={open === model.id ? "model-card open" : "model-card"} key={model.id}><button onClick={() => setOpen(open === model.id ? "" : model.id)}><div><span>{subject === "portfolio" ? "◎" : "§"}</span><h2>{model.title}</h2></div><b>{open === model.id ? "−" : "+"}</b></button>{open === model.id && <div className="model-content"><p>{model.summary}</p>{model.formula && <div className="formula-box">{model.formula}</div>}<h3>Prüfungs-Check</h3><ol>{model.checkpoints.map((item) => <li key={item}>{item}</li>)}</ol><SourceBadge source={model.source} /></div>}</article>)}</div>
+    <div className="subject-tabs"><button className={subject === "portfolio" ? "active" : ""} onClick={() => { setSubject("portfolio"); onSubjectChange("portfolio"); }}>Portfolio Management</button><button className={subject === "tax" ? "active" : ""} onClick={() => { setSubject("tax"); onSubjectChange("tax"); }}>Taxation</button></div>
+    <div className="models-grid">{modelOverviews.filter((item) => item.subject === subject).map((model) => <article className={open === model.id ? "model-card open" : "model-card"} key={model.id}><button onClick={() => setOpen(open === model.id ? "" : model.id)}><div><span>{subject === "portfolio" ? "◎" : "§"}</span><h2>{model.title}</h2></div><b>{open === model.id ? "−" : "+"}</b></button>{open === model.id && <div className="model-content"><p>{model.summary}</p>{model.formula && <div className="formula-box">{model.formula}</div>}<h3>Prüfungs-Check</h3><ol>{model.checkpoints.map((item) => <li key={item}>{item}</li>)}</ol><SourceBadge source={model.source} /><button className="primary-button active-check" onClick={() => navigate("quiz", { subject: model.subject, topic: modelQuizTopic(model.id, model.title) })}>Wissen aktiv mit MCQs prüfen →</button><small>Das Lesen selbst gibt keine Kompetenzpunkte.</small></div>}</article>)}</div>
   </section>;
 }
 
-function Videos() {
-  const [subject, setSubject] = useState<Subject>("portfolio");
+function Videos({ initialSubject, navigate, onSubjectChange }: { initialSubject: Subject; navigate: Navigate; onSubjectChange: (subject: Subject) => void }) {
+  const [subject, setSubject] = useState<Subject>(initialSubject);
   const [topic, setTopic] = useState("all");
   const topics = [...new Set(learningVideos.filter((video) => video.subject === subject).map((video) => video.topic))];
   const filtered = learningVideos.filter((video) => video.subject === subject && (topic === "all" || video.topic === topic));
@@ -1140,8 +1447,8 @@ function Videos() {
       />
       <div className="video-toolbar">
         <div className="subject-tabs" aria-label="Fach auswählen">
-          <button className={subject === "portfolio" ? "active" : ""} onClick={() => { setSubject("portfolio"); setTopic("all"); }}>Portfolio Management</button>
-          <button className={subject === "tax" ? "active" : ""} onClick={() => { setSubject("tax"); setTopic("all"); }}>Taxation</button>
+          <button className={subject === "portfolio" ? "active" : ""} onClick={() => { setSubject("portfolio"); onSubjectChange("portfolio"); setTopic("all"); }}>Portfolio Management</button>
+          <button className={subject === "tax" ? "active" : ""} onClick={() => { setSubject("tax"); onSubjectChange("tax"); setTopic("all"); }}>Taxation</button>
         </div>
         <label>
           <span>Thema filtern</span>
@@ -1180,6 +1487,7 @@ function Videos() {
                   <a href={video.url} target="_blank" rel="noopener noreferrer" aria-label={`${video.title} auf YouTube öffnen`}>
                     Auf YouTube ansehen <span aria-hidden="true">↗</span>
                   </a>
+                  <button className="secondary-button active-check" onClick={() => navigate("quiz", { subject: video.subject, topic: video.topic })}>Danach aktiv prüfen →</button>
                 </article>
               ))}
             </div>
