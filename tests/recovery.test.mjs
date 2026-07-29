@@ -19,6 +19,39 @@ test("ships two source-bound 90-point exam plans", async () => {
   assert.match(exams, /rubric:/);
 });
 
+test("splits Taxation into a 60-minute German part, 30-minute international part and combined exam", async () => {
+  const [exams, examUi, types] = await Promise.all([
+    read("../lib/data/exams.ts"),
+    read("../app/examWorkspace.tsx"),
+    read("../lib/types.ts"),
+  ]);
+  assert.match(exams, /"tax-german"[\s\S]*?durationMinutes: 60,[\s\S]*?maxPoints: 60/);
+  assert.match(exams, /"tax-international"[\s\S]*?durationMinutes: 30,[\s\S]*?maxPoints: 30/);
+  assert.match(exams, /"tax-combined"[\s\S]*?durationMinutes: 90,[\s\S]*?maxPoints: 90/);
+  assert.match(exams, /const germanTaxExamPlan = taxExamPlan\.slice\(0, 4\)/);
+  assert.match(exams, /const internationalTaxExamPlan = taxExamPlan\.slice\(4\)/);
+  assert.match(examUi, /Taxation folgt der echten Gewichtung/);
+  assert.match(types, /examModeId\?: ExamModeId/);
+});
+
+test("offers three MCQ difficulty levels with balanced transfer variants", async () => {
+  const [page, variants, index, adaptive] = await Promise.all([
+    read("../app/page.tsx"),
+    read("../lib/data/quizVariants.ts"),
+    read("../lib/data/index.ts"),
+    read("../lib/adaptive.ts"),
+  ]);
+  assert.match(page, /Basis/);
+  assert.match(page, /Anwendung/);
+  assert.match(page, /Transfer/);
+  assert.match(page, /shuffleQuestionOptions/);
+  assert.match(page, /difficulty: question\.difficulty/);
+  assert.equal((variants.match(/"pqv\d{2}"/g) ?? []).length, 9);
+  assert.equal((variants.match(/"tqv\d{2}"/g) ?? []).length, 7);
+  assert.match(index, /\.\.\.quizVariants/);
+  assert.match(adaptive, /item\.difficulty \?\? 2/);
+});
+
 test("removes dependent quiz wording and supplies all required values", async () => {
   const [portfolio, tax] = await Promise.all([
     read("../lib/data/portfolio.ts"),
@@ -65,4 +98,3 @@ test("connects navigation, attempts, cloud merge and realistic exam UI", async (
   assert.match(examUi, /Teilpunkte-Rubrik/);
   assert.match(examUi, /markedQuestionIds/);
 });
-

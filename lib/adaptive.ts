@@ -58,8 +58,9 @@ export function topicMastery(progress: AppProgress): TopicMastery[] {
 
   return [...all.values()].map(({ subject, topic, attempts: topicAttempts }) => {
     const recent = topicAttempts.slice(-8);
-    const weightTotal = recent.reduce((sum, _, index) => sum + index + 1, 0) || 1;
-    const accuracy = Math.round(recent.reduce((sum, item, index) => sum + (item.maxScore ? item.score / item.maxScore : 0) * (index + 1), 0) / weightTotal * 100);
+    const attemptWeight = (item: LearningAttempt, index: number) => (index + 1) * (item.difficulty ?? 2) / 2;
+    const weightTotal = recent.reduce((sum, item, index) => sum + attemptWeight(item, index), 0) || 1;
+    const accuracy = Math.round(recent.reduce((sum, item, index) => sum + (item.maxScore ? item.score / item.maxScore : 0) * attemptWeight(item, index), 0) / weightTotal * 100);
     const timed = recent.filter((item) => item.durationMs > 0);
     const speed = timed.length ? Math.round(timed.reduce((sum, item) => {
       const expected = item.stage === "timed" ? 10 * 60_000 : item.mode === "calculation-lab" || item.mode === "tax-case" ? 8 * 60_000 : 75_000;
@@ -89,14 +90,18 @@ export function scoreForecast(progress: AppProgress, subject: Subject) {
   const baseline = subject === "portfolio" ? 31 : 50;
   const rows = topicMastery(progress).filter((item) => item.subject === subject);
   if (!rows.some((item) => item.attempts > 0)) return { low: baseline, high: baseline, central: baseline };
-  const examScores = progress.exams.filter((item) => item.subject === subject && item.score !== undefined && item.maxScore).slice(-3).map((item) => item.score! / item.maxScore! * 90);
+  const recentExams = progress.exams.filter((item) => item.subject === subject && item.score !== undefined && item.maxScore).slice(-5);
+  const examWeight = recentExams.reduce((sum, item) => sum + item.maxScore!, 0);
+  const examEstimate = examWeight
+    ? recentExams.reduce((sum, item) => sum + item.score! / item.maxScore! * 90 * item.maxScore!, 0) / examWeight
+    : undefined;
   const topicWeights = new Map<string, number>();
   quizQuestions.filter((item) => item.subject === subject).forEach((item) => topicWeights.set(item.topic, (topicWeights.get(item.topic) ?? 0) + item.points));
   const weightTotal = rows.reduce((sum, item) => sum + (topicWeights.get(item.topic) ?? 3), 0) || 1;
   const masteryEstimate = rows.reduce((sum, item) => sum + item.mastery * (topicWeights.get(item.topic) ?? 3), 0) / weightTotal * .9;
-  const central = Math.round(examScores.length ? (masteryEstimate * .45 + examScores.reduce((a,b)=>a+b,0)/examScores.length * .55) : baseline * .35 + masteryEstimate * .65);
+  const central = Math.round(examEstimate !== undefined ? masteryEstimate * .45 + examEstimate * .55 : baseline * .35 + masteryEstimate * .65);
   const covered = rows.filter((item) => item.attempts > 0).length / Math.max(1, rows.length);
-  const uncertainty = Math.max(5, Math.round(15 - covered * 7 - Math.min(3, examScores.length)));
+  const uncertainty = Math.max(5, Math.round(15 - covered * 7 - Math.min(3, recentExams.length)));
   return { low: Math.max(0, Math.round(central - uncertainty)), high: Math.min(90, Math.round(central + uncertainty)), central };
 }
 
