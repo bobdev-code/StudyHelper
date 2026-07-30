@@ -51,7 +51,10 @@ npm run build:vercel
 - Fehlerreparatur mit neuer Variante und Abschluss erst nach erfolgreicher Anwendung
 - 19 Modelle und Ablaufschemata
 - Quellenreferenz pro Karte, Frage und Modell
-- Offline-Cache nach dem ersten erfolgreichen Laden; keine externen Schriftarten oder APIs
+- durchgängige deutsche und englische Bedienoberfläche; fachliche Originalformulierungen bleiben quellengetreu
+- bedarfsgeladenes Prüfungs-, Werkstatt-, Modell-, Video- und Tax-Prep-Modul für einen kleineren Erststart
+- installierbare PWA mit Android-Installationsprompt, iOS-Hinweis, Updateanzeige und eigenem Offline-Screen
+- getrennter Offline-Cache für Navigation und versionierte statische Assets; keine externen Schriftarten oder Laufzeit-APIs für die Lerninhalte
 
 ## Quellenpolitik
 
