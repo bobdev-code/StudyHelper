@@ -1,37 +1,48 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import {
+  combinedTaxExamVariants,
+  examModes,
+  germanTaxExamVariants,
+  internationalTaxExamVariants,
+  portfolioExamVariants,
+} from "../lib/data/exams.ts";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
-test("ships two source-bound 90-point exam plans", async () => {
-  const exams = await read("../lib/data/exams.ts");
-  const points = (prefix) => [...exams.matchAll(new RegExp(`id:\\s*"${prefix}-[^"]+"[\\s\\S]*?points:\\s*(\\d+),\\s*\\n\\s*targetMinutes`, "g"))]
-    .map((match) => Number(match[1]));
-
-  const portfolio = points("pe");
-  const tax = points("te");
-  assert.equal(portfolio.length, 7);
-  assert.equal(tax.length, 7);
-  assert.equal(portfolio.reduce((sum, value) => sum + value, 0), 90);
-  assert.equal(tax.reduce((sum, value) => sum + value, 0), 90);
-  assert.match(exams, /responseType: "text"/);
-  assert.match(exams, /rubric:/);
+test("ships rotating source-bound 90-point mock banks", () => {
+  assert.equal(portfolioExamVariants.length, 3);
+  assert.equal(combinedTaxExamVariants.length, 3);
+  for (const variant of [...portfolioExamVariants, ...combinedTaxExamVariants]) {
+    assert.equal(variant.blocks.reduce((sum, block) => sum + block.points, 0), 90);
+    assert.ok(variant.blocks.every((block) => block.rubric.length > 0 && block.source.document));
+  }
+  for (const variant of portfolioExamVariants) {
+    assert.equal(variant.blocks.length, 13);
+    assert.deepEqual(variant.blocks.slice(0, 4).map((block) => block.points), [6, 6, 6, 6]);
+    assert.deepEqual(variant.blocks.slice(4, 9).map((block) => block.points), [3, 3, 4, 4, 4]);
+    assert.deepEqual(variant.blocks.slice(9).map((block) => block.points), [20, 9, 9, 10]);
+  }
 });
 
-test("splits Taxation into a 60-minute German part, 30-minute international part and combined exam", async () => {
-  const [exams, examUi, types] = await Promise.all([
-    read("../lib/data/exams.ts"),
+test("splits Taxation into rotating 60-, 30- and 90-point modes", async () => {
+  const [examUi, types] = await Promise.all([
     read("../app/examWorkspace.tsx"),
     read("../lib/types.ts"),
   ]);
-  assert.match(exams, /"tax-german"[\s\S]*?durationMinutes: 60,[\s\S]*?maxPoints: 60/);
-  assert.match(exams, /"tax-international"[\s\S]*?durationMinutes: 30,[\s\S]*?maxPoints: 30/);
-  assert.match(exams, /"tax-combined"[\s\S]*?durationMinutes: 90,[\s\S]*?maxPoints: 90/);
-  assert.match(exams, /const germanTaxExamPlan = taxExamPlan\.slice\(0, 4\)/);
-  assert.match(exams, /const internationalTaxExamPlan = taxExamPlan\.slice\(4\)/);
+  assert.deepEqual(
+    [examModes["tax-german"], examModes["tax-international"], examModes["tax-combined"]].map((mode) => [mode.durationMinutes, mode.maxPoints]),
+    [[60, 60], [30, 30], [90, 90]],
+  );
+  assert.equal(germanTaxExamVariants.length, 3);
+  assert.equal(internationalTaxExamVariants.length, 3);
+  assert.ok(germanTaxExamVariants.every((variant) => variant.blocks.reduce((sum, block) => sum + block.points, 0) === 60));
+  assert.ok(internationalTaxExamVariants.every((variant) => variant.blocks.reduce((sum, block) => sum + block.points, 0) === 30));
+  assert.ok(germanTaxExamVariants.every((variant) => variant.blocks.some((block) => block.responseType === "diagram")));
   assert.match(examUi, /Taxation folgt der echten Gewichtung/);
   assert.match(types, /examModeId\?: ExamModeId/);
+  assert.match(types, /examVariantId\?: string/);
 });
 
 test("offers three MCQ difficulty levels with balanced transfer variants", async () => {

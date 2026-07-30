@@ -40,8 +40,10 @@ npm run build:vercel
 - Fehlerprotokoll mit Antwortzeit, Sicherheit und sieben Fehlerarten
 - fachgetrennte Navigation mit Übersicht, Planen, Lernen und Prüfen
 - direkte Fach-/Themenübergabe aus „Optimal lernen“, Tagesplan, Kompetenzmatrix und Fehlerbuch
-- Tax-Prüfungsmodus als German-Teil (60 Min/60 P), International-Teil (30 Min/30 P) oder Gesamtprüfung (90 Min/90 P im Verhältnis 2:1); Portfolio bleibt eine vollständige 90-Minuten-/90-Punkte-Simulation
-- vollständige Fälle, Freitext, Rechenblatt, Markierungen, Autosave und Teilpunkte-Rubrik
+- je drei wechselnde, quellengebundene Prüfungsvarianten: Portfolio nach der offiziellen 24/18/48-Punkte-Struktur sowie Tax als German-Teil (60 Min/60 P), International-Teil (30 Min/30 P) oder Gesamtprüfung (90 Min/90 P im Verhältnis 2:1)
+- vollständige Fälle, Freitext, interaktive Tax-Zeichnungsantworten, Rechenblatt, Markierungen, Autosave und Teilpunkte-Rubrik
+- Prüfungscoach mit Resttagen, Simulationsempfehlung und offenen Reparaturen
+- Klausurauswertung nach Punkten, Zeit pro Punkt, unbeantworteten Blöcken, Fehlerart und Thema sowie automatisch priorisiertem Reparaturblock
 - ausklappbare offizielle Portfolio-Formelsammlung, sicherer Taschenrechner sowie Tax-Zeichenbausteine und schematischer Belastungsvergleich
 - gespeicherte und selbstbewertete Klausurantworten im Tax-Falllabor
 - gemeinsames Attempt-Modell für Karten, Quiz, Rechenlabor, Tax-Fälle, Portfolio-Klausurwerkstatt und Simulation
@@ -55,12 +57,6 @@ npm run build:vercel
 
 Alle fachlichen Inhalte stammen aus den bereitgestellten Kursdateien. Aktuelle offizielle 2025-Unterlagen und Lösungen haben Vorrang. Der offizielle EBS-Single-Choice-Fragenkatalog ergänzt 40 geprüfte Tax-Fragen. Die markierte International-Taxation-Altklausur 2023 wird nur für eindeutig markierte und gegengeprüfte Aussagen verwendet. Das Quizlet-Dokument dient ausschließlich als sekundäre Abdeckungs- und Wiederholungsquelle.
 
-Nicht verwendet wurden:
-
-- `PS8_25_Final.pdf` — 0 Byte
-- `PS8_25_Solution_Final.pdf` — abgeschnitten, Trailer/XRef fehlt
-- `BSC_Portfolio_Management_FT25_90_final_Solution.pdf` — abgeschnitten, Trailer/XRef fehlt
-- studentische Übersichten als alleinige Quelle
-- widersprüchliche oder zeitabhängige Steuerrechnungen aus den in der Quellenprüfung markierten Fällen
+Die zuvor als beschädigt markierten Dateien `PS8_25_Final.pdf`, `PS8_25_Solution_Final.pdf` und `BSC_Portfolio_Management_FT25_90_final_Solution.pdf` wurden am 30.07.2026 erneut geprüft und sind in den jetzt bereitgestellten Fassungen vollständig lesbar. Sie dürfen damit wieder zur Quellenkontrolle verwendet werden. Studentische Übersichten werden weiterhin nie als alleinige Quelle genutzt; widersprüchliche oder zeitabhängige Steuerrechnungen bleiben ausgeschlossen.
 
 Die App ist ein Lernwerkzeug. Die Punkteschätzung im Dashboard ist keine Prüfungsprognose und die steuerlichen Inhalte ersetzen keine steuerliche Beratung.

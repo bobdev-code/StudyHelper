@@ -42,6 +42,7 @@ import {
 } from "@/lib/adaptive";
 import { ExamWorkspace } from "./examWorkspace";
 import { ExamAidPanel } from "./examAids";
+import { examCoachSnapshot } from "@/lib/examAnalytics";
 
 type View = "dashboard" | "focus" | "mastery" | "plan" | "cards" | "quiz" | "trainer" | "errors" | "models" | "videos" | "exam" | "session-summary";
 type SubjectScope = Subject | "all";
@@ -479,7 +480,7 @@ export default function Home() {
         {view === "errors" && <ErrorBook progress={progress} navigate={navigate} />}
         {view === "models" && <Models initialSubject={subjectScope === "all" ? "portfolio" : subjectScope} navigate={navigate} onSubjectChange={setActiveSubject} />}
         {view === "videos" && <Videos initialSubject={subjectScope === "all" ? "portfolio" : subjectScope} navigate={navigate} onSubjectChange={setActiveSubject} />}
-        {view === "exam" && <ExamWorkspace key={subjectScope} progress={progress} setProgress={setProgress} language={language} initialSubject={subjectScope === "all" ? undefined : subjectScope} onSubjectChange={setActiveSubject} />}
+        {view === "exam" && <ExamWorkspace key={subjectScope} progress={progress} setProgress={setProgress} language={language} initialSubject={subjectScope === "all" ? undefined : subjectScope} onSubjectChange={setActiveSubject} onStartRepair={(subject, topic) => navigate("quiz", { subject, topic })} />}
         {view === "session-summary" && progress.activeStudySession && <OptimalSessionSummary session={progress.activeStudySession} progress={progress} navigate={navigate} onStartNext={() => startOptimalSession(progress.settings.dailyMinutes, progress.activeStudySession?.subject ?? "all")} />}
         <footer className="app-footer">
           <span>{user ? tr(language, cloudState === "synced" ? "Cloud-Lernstand synchronisiert" : cloudState === "error" ? "Synchronisierung fehlgeschlagen" : "Cloud-Lernstand wird synchronisiert …", cloudState === "synced" ? "Cloud progress synced" : cloudState === "error" ? "Sync failed" : "Syncing cloud progress …") : tr(language,"Lokaler Lernstand · für Gerätewechsel anmelden","Local progress · sign in to use other devices")}</span>
@@ -601,6 +602,7 @@ function Dashboard({ progress, navigate, subjectScope, onStartOptimal }: { progr
     : subjectScope === "tax"
       ? ["Tax Liability", "Partnership & Co-Entrepreneurship", "Trade Tax"]
       : ["CAPM, SML & Beta", "Performance Measures", "Tax Liability"];
+  const coachSubjects: Subject[] = subjectScope === "all" ? ["portfolio", "tax"] : [subjectScope];
 
   return (
     <section className="page dashboard-page">
@@ -613,6 +615,29 @@ function Dashboard({ progress, navigate, subjectScope, onStartOptimal }: { progr
         {subjectScope !== "tax" ? <SubjectCard subject="portfolio" score={pScore} mastery={portfolioLearning.mastery} mcqs={portfolioLearning.mcqs} applications={portfolioLearning.applications} priority /> : null}
         {subjectScope !== "portfolio" ? <SubjectCard subject="tax" score={tScore} mastery={taxLearning.mastery} mcqs={taxLearning.mcqs} applications={taxLearning.applications} /> : null}
       </div>
+
+      <section className="exam-coach panel">
+        <div className="panel-title"><span>◇</span><div><p className="eyebrow">{tr(language, "PRÜFUNGSCOACH", "EXAM COACH")}</p><h2>{tr(language, "Der nächste sichere Prüfungsschritt", "Your next exam-ready step")}</h2></div></div>
+        <div className="exam-coach-grid">{coachSubjects.map((subject) => {
+          const coach = examCoachSnapshot(progress, subject);
+          const repair = (progress.repairs ?? []).find((item) => item.subject === subject && item.status === "open");
+          const action = coach.recommendedMode === "repair" && repair
+            ? () => navigate("quiz", { subject, topic: repair.topic })
+            : () => navigate("exam", { subject, topic: "Exam" });
+          return <article key={subject}>
+            <span>{subject === "portfolio" ? "◎ Portfolio Management" : "§ Taxation"}</span>
+            <strong>{coach.recommendedMode === "full-mock"
+              ? tr(language, "Vollständige Probeklausur", "Full mock exam")
+              : coach.recommendedMode === "repair"
+                ? tr(language, "Fehler mit größtem Hebel reparieren", "Repair the highest-impact gap")
+                : tr(language, "Teilprüfung festigen", "Consolidate with a section exam")}</strong>
+            <small>{coach.recentFull
+              ? tr(language, `Letzte 90-Punkte-Simulation: ${coach.recentFull.score ?? 0}/90`, `Last 90-point mock: ${coach.recentFull.score ?? 0}/90`)
+              : tr(language, "Noch keine vollständige Simulation", "No full mock completed yet")} · {coach.openRepairs} {tr(language, "offene Reparaturen", "open repairs")}</small>
+            <button onClick={action}>{coach.recommendedMode === "repair" && repair ? tr(language, "Reparatur starten", "Start repair") : tr(language, "Prüfung starten", "Start exam")} →</button>
+          </article>;
+        })}</div>
+      </section>
 
       <div className="dashboard-lower">
         <article className="panel goal-panel">
