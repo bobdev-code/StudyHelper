@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { examModeForSession, examModes, type ExamBlock } from "@/lib/data/exams";
+import { examModeForSession, examModes, selectExamVariant, type ExamBlock } from "@/lib/data/exams";
+import { examResultInsights } from "@/lib/examAnalytics";
 import { addLearningAttempt, upsertExam } from "@/lib/storage";
 import {
   examRemainingSeconds,
@@ -10,13 +11,28 @@ import {
   ungradedTextBlockIds,
   unansweredExamBlockIds,
 } from "@/lib/examSafety";
-import type { AppProgress, Confidence, ErrorType, ExamModeId, ExamSession, Language, Subject } from "@/lib/types";
-import { ExamAidPanel } from "./examAids";
+import type { AppProgress, Confidence, ErrorType, ExamAnswer, ExamModeId, ExamSession, Language, Subject, TaxDiagramAnswer } from "@/lib/types";
+import { ExamAidPanel, TaxDiagramAnswerEditor, TaxDiagramPreview } from "./examAids";
 
 const tr = (language: Language, de: string, en: string) => language === "de" ? de : en;
 
 function examId() {
   return `exam-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function recordElapsedBlockTime(current: ExamSession, nextBlockId?: string) {
+  const now = new Date();
+  const started = current.currentBlockStartedAt ? new Date(current.currentBlockStartedAt) : now;
+  const currentBlockId = current.currentBlockId;
+  const elapsed = Math.max(0, now.getTime() - started.getTime());
+  return {
+    ...current,
+    currentBlockId: nextBlockId ?? currentBlockId,
+    currentBlockStartedAt: now.toISOString(),
+    blockDurationsMs: currentBlockId
+      ? { ...(current.blockDurationsMs ?? {}), [currentBlockId]: (current.blockDurationsMs?.[currentBlockId] ?? 0) + elapsed }
+      : current.blockDurationsMs,
+  };
 }
 
 function Source({ block, language }: { block: ExamBlock; language: Language }) {
@@ -29,12 +45,14 @@ export function ExamWorkspace({
   language,
   initialSubject,
   onSubjectChange,
+  onStartRepair,
 }: {
   progress: AppProgress;
   setProgress: React.Dispatch<React.SetStateAction<AppProgress>>;
   language: Language;
   initialSubject?: Subject;
   onSubjectChange: (subject: Subject) => void;
+  onStartRepair?: (subject: Subject, topic: string) => void;
 }) {
   const [modeId, setModeId] = useState<ExamModeId>(initialSubject === "tax" ? "tax-combined" : "portfolio-full");
   const [session, setSession] = useState<ExamSession>();
@@ -43,13 +61,14 @@ export function ExamWorkspace({
   const [reviewing, setReviewing] = useState(false);
   const [submissionNotice, setSubmissionNotice] = useState("");
   const selectedMode = examModes[modeId];
-  const activeMode = session ? examModeForSession(session.subject, session.examModeId) : selectedMode;
+  const activeMode = session ? examModeForSession(session.subject, session.examModeId, session.examVariantId) : selectedMode;
   const plan = session
     ? session.questionIds.map((id) => activeMode.blocks.find((item) => item.id === id)).filter((item): item is ExamBlock => Boolean(item))
     : activeMode.blocks;
   const block = plan[index];
   const incomplete = [...progress.exams].filter((item) => !item.completedAt).reverse();
   const ungraded = [...progress.exams].filter((item) => item.completedAt && item.score === undefined).reverse();
+  const variant = activeMode.variants.find((item) => item.id === session?.examVariantId);
 
   const finishWriting = (forced = false) => {
     if (!session) return;
@@ -60,7 +79,7 @@ export function ExamWorkspace({
       `${unanswered.length} of ${plan.length} blocks are unanswered. Submit for self-grading anyway?`,
     ))) return;
     const now = new Date().toISOString();
-    const completed: ExamSession = { ...session, completedAt: session.completedAt ?? now, updatedAt: now };
+    const completed: ExamSession = { ...recordElapsedBlockTime(session), completedAt: session.completedAt ?? now, updatedAt: now };
     setSession(completed);
     setReviewing(true);
     setIndex(0);
@@ -75,7 +94,7 @@ export function ExamWorkspace({
       if (remaining === 0) {
         setSubmissionNotice(tr(language, "Die Zeit ist abgelaufen. Die Prüfung wurde automatisch zur Selbstkorrektur abgegeben.", "Time expired. The exam was automatically submitted for self-grading."));
         const now = new Date().toISOString();
-        const completed: ExamSession = { ...session, completedAt: session.completedAt ?? now, updatedAt: now };
+        const completed: ExamSession = { ...recordElapsedBlockTime(session), completedAt: session.completedAt ?? now, updatedAt: now };
         setSession(completed);
         setReviewing(true);
         setIndex(0);
@@ -98,15 +117,23 @@ export function ExamWorkspace({
 
   const start = () => {
     const mode = examModes[modeId];
-    const blocks = mode.blocks;
+    const previousVariants = progress.exams
+      .filter((item) => item.examModeId === mode.id && item.examVariantId)
+      .sort((a, b) => (a.completedAt ?? a.updatedAt ?? a.startedAt).localeCompare(b.completedAt ?? b.updatedAt ?? b.startedAt))
+      .map((item) => item.examVariantId!);
+    const chosen = selectExamVariant(mode.id, previousVariants);
+    const blocks = chosen.blocks;
+    const now = new Date().toISOString();
     const created: ExamSession = {
       id: examId(),
       subject: mode.subject,
       examModeId: mode.id,
+      examVariantId: chosen.id,
       durationMinutes: mode.durationMinutes,
-      startedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      startedAt: now,
+      updatedAt: now,
       currentBlockId: blocks[0]?.id,
+      currentBlockStartedAt: now,
       questionIds: blocks.map((item) => item.id),
       answers: {},
       confidences: {},
@@ -122,17 +149,17 @@ export function ExamWorkspace({
   };
 
   const resume = (exam: ExamSession, review: boolean) => {
-    const mode = examModeForSession(exam.subject, exam.examModeId);
+    const mode = examModeForSession(exam.subject, exam.examModeId, exam.examVariantId);
     const blocks = exam.questionIds.map((id) => mode.blocks.find((item) => item.id === id)).filter((item): item is ExamBlock => Boolean(item));
     setModeId(mode.id);
-    setSession(exam);
+    setSession(review ? exam : { ...exam, currentBlockStartedAt: new Date().toISOString() });
     setIndex(firstResumeBlockIndex(blocks, exam.answers, exam.selfScores, review, exam.currentBlockId));
     setReviewing(review);
     setSeconds(examRemainingSeconds(exam.startedAt, exam.durationMinutes ?? mode.durationMinutes));
     onSubjectChange(exam.subject);
   };
 
-  const answer = (value: string | number) => {
+  const answer = (value: ExamAnswer) => {
     if (!session || !block) return;
     save({ ...session, answers: { ...session.answers, [block.id]: value } });
   };
@@ -196,11 +223,10 @@ export function ExamWorkspace({
           stage: "timed",
           score: blockScore,
           maxScore: item.points,
-          durationMs: Math.max(
-            1,
+          durationMs: Math.max(1, finalSession.blockDurationsMs?.[item.id] ?? (
             (new Date(completedAt).getTime() - new Date(finalSession.startedAt).getTime())
-            * item.targetMinutes / Math.max(1, plan.reduce((sum, entry) => sum + entry.targetMinutes, 0)),
-          ),
+            * item.targetMinutes / Math.max(1, plan.reduce((sum, entry) => sum + entry.targetMinutes, 0))
+          )),
           confidence: finalSession.confidences[item.id] ?? "medium",
           errorTypes: errors,
           hintsUsed: 0,
@@ -221,7 +247,7 @@ export function ExamWorkspace({
   const openSelfScores = session ? ungradedTextBlockIds(plan, session.selfScores) : [];
   const goToBlock = (nextIndex: number) => {
     if (!session || !plan[nextIndex]) return;
-    save({ ...session, currentBlockId: plan[nextIndex].id });
+    save(recordElapsedBlockTime(session, plan[nextIndex].id));
     setIndex(nextIndex);
   };
 
@@ -241,7 +267,7 @@ export function ExamWorkspace({
               return <button key={item} className={modeId === item ? "selected" : ""} onClick={() => { setModeId(item); onSubjectChange(mode.subject); setSeconds(mode.durationMinutes * 60); }}>
                 <span>◎</span>
                 <strong>{tr(language, mode.labelDe, mode.labelEn)}</strong>
-                <small>{mode.durationMinutes} Min · {mode.maxPoints} P · {mode.blocks.length} {tr(language, "Blöcke", "blocks")}</small>
+                <small>{mode.durationMinutes} Min · {mode.maxPoints} P · {mode.variants.length} {tr(language, "wechselnde Klausuren", "rotating mocks")}</small>
               </button>;
             })}
           </div>
@@ -254,7 +280,7 @@ export function ExamWorkspace({
               return <button key={item} className={modeId === item ? "selected" : ""} onClick={() => { setModeId(item); onSubjectChange(mode.subject); setSeconds(mode.durationMinutes * 60); }}>
                 <span>§</span>
                 <strong>{tr(language, mode.labelDe, mode.labelEn)}</strong>
-                <small>{mode.durationMinutes} Min · {mode.maxPoints} P · {tr(language, mode.descriptionDe, mode.descriptionEn)}</small>
+                <small>{mode.durationMinutes} Min · {mode.maxPoints} P · {mode.variants.length} {tr(language, "Varianten", "variants")}</small>
               </button>;
             })}
           </div>
@@ -272,7 +298,7 @@ export function ExamWorkspace({
             <li>{tr(language, "Freitext wird anschließend anhand einer Teilpunkte-Rubrik bewertet.", "Free text is graded afterwards with a partial-credit rubric.")}</li>
           </ul>
           {[...incomplete, ...ungraded].map((exam) => {
-            const mode = examModeForSession(exam.subject, exam.examModeId);
+            const mode = examModeForSession(exam.subject, exam.examModeId, exam.examVariantId);
             const blocks = exam.questionIds.map((id) => mode.blocks.find((item) => item.id === id)).filter((item): item is ExamBlock => Boolean(item));
             const isReview = Boolean(exam.completedAt);
             const completed = isReview
@@ -282,7 +308,7 @@ export function ExamWorkspace({
             return <button className="resume-button resume-detail" key={exam.id} onClick={() => resume(exam, isReview)}>
               <span>{exam.subject === "portfolio" ? "◎ Portfolio Management" : "§ Taxation"}</span>
               <strong>{tr(language, mode.labelDe, mode.labelEn)}</strong>
-              <small>{isReview ? tr(language, "Selbstkorrektur", "Self-grading") : tr(language, "Bearbeitung", "Writing")} · {completed}/{blocks.length} · {isReview ? tr(language, `${blocks.length - completed} Bewertungen offen`, `${blocks.length - completed} grades left`) : `${String(Math.floor(remaining / 60)).padStart(2, "0")}:${String(remaining % 60).padStart(2, "0")} ${tr(language, "Restzeit", "remaining")}`}</small>
+              <small>{mode.variants.find((item) => item.id === exam.examVariantId)?.labelEn ?? "Legacy mock"} · {isReview ? tr(language, "Selbstkorrektur", "Self-grading") : tr(language, "Bearbeitung", "Writing")} · {completed}/{blocks.length} · {isReview ? tr(language, `${blocks.length - completed} Bewertungen offen`, `${blocks.length - completed} grades left`) : `${String(Math.floor(remaining / 60)).padStart(2, "0")}:${String(remaining % 60).padStart(2, "0")} ${tr(language, "Restzeit", "remaining")}`}</small>
             </button>;
           })}
           <button className="primary-button" onClick={start}>{tr(language, "Neue Prüfung starten", "Start new exam")} →</button>
@@ -294,7 +320,26 @@ export function ExamWorkspace({
   if (!block) return null;
 
   if (!reviewing && session.score !== undefined) {
-    return <section className="page exam-workspace"><div className="exam-final panel"><span className="result-ring mastered">{session.score}<small>/ {session.maxScore ?? activeMode.maxPoints}</small></span><h1>{tr(language, "Prüfung ausgewertet", "Exam graded")}</h1><p>{tr(language, "Das Ergebnis ist jetzt mit der Kompetenzmatrix, Prognose und Fehlerreparatur verknüpft. Teilprüfungen fließen entsprechend ihrer Punktzahl gewichtet ein.", "The result is now linked to mastery, forecasting and error repair. Section exams are weighted by their point value.")}</p><button className="primary-button" onClick={() => setSession(undefined)}>{tr(language, "Zur Prüfungswahl", "Choose another exam")} →</button></div></section>;
+    const insights = examResultInsights(session, plan);
+    const errorRows = Object.entries(insights.lostByError).sort((a, b) => b[1] - a[1]);
+    const topicRows = Object.entries(insights.lostByTopic).sort((a, b) => b[1] - a[1]);
+    return <section className="page exam-workspace"><div className="exam-final panel">
+      <span className="result-ring mastered">{session.score}<small>/ {session.maxScore ?? activeMode.maxPoints}</small></span>
+      <p className="eyebrow">{variant?.labelEn ?? tr(language, "Prüfungsvariante", "Exam variant")}</p>
+      <h1>{tr(language, "Prüfung ausgewertet", "Exam graded")}</h1>
+      <div className="exam-result-metrics">
+        <article><strong>{insights.minutesUsed}</strong><span>{tr(language, "Minuten genutzt", "minutes used")}</span></article>
+        <article><strong>{insights.minutesPerPoint ?? "–"}</strong><span>{tr(language, "Minuten je Punkt", "minutes per point")}</span></article>
+        <article><strong>{insights.unanswered.length}</strong><span>{tr(language, "unbeantwortet", "unanswered")}</span></article>
+      </div>
+      <div className="exam-loss-grid">
+        <div><h2>{tr(language, "Verlorene Punkte nach Fehlerart", "Points lost by error type")}</h2>{errorRows.length ? <ul>{errorRows.map(([label, points]) => <li key={label}><span>{label}</span><b>−{points} P</b></li>)}</ul> : <p>{tr(language, "Keine Punkte verloren.", "No points lost.")}</p>}</div>
+        <div><h2>{tr(language, "Verlorene Punkte nach Thema", "Points lost by topic")}</h2>{topicRows.length ? <ul>{topicRows.map(([label, points]) => <li key={label}><span>{label}</span><b>−{points} P</b></li>)}</ul> : <p>{tr(language, "Keine Punkte verloren.", "No points lost.")}</p>}</div>
+      </div>
+      {insights.repairTargets.length > 0 && <div className="exam-repair-block"><h2>{tr(language, "Dein Reparaturblock", "Your repair block")}</h2><p>{tr(language, "Diese Übungen versprechen aktuell den größten Punktegewinn.", "These exercises currently offer the largest score gain.")}</p>{insights.repairTargets.map((target, itemIndex) => <button key={target.blockId} onClick={() => onStartRepair?.(target.subject, target.topic)} disabled={!onStartRepair}><span>{itemIndex + 1}</span><strong>{target.topic}</strong><small>{target.errorType} · {target.lostPoints} P {tr(language, "Potenzial", "potential")}</small></button>)}</div>}
+      <p>{tr(language, "Das Ergebnis ist mit Kompetenzmatrix, Prognose und Fehlerreparatur verknüpft.", "The result is linked to mastery, forecasting and error repair.")}</p>
+      <button className="primary-button" onClick={() => setSession(undefined)}>{tr(language, "Zur Prüfungswahl", "Choose another exam")} →</button>
+    </div></section>;
   }
 
   return <section className="page exam-workspace">
@@ -309,6 +354,7 @@ export function ExamWorkspace({
       <div className="quiz-top"><span>{block.topic}</span><strong>{block.points} P · {block.targetMinutes} Min</strong></div>
       <h1>{block.title}</h1>
       <p className="exam-prompt">{block.prompt}</p>
+      {block.helpDe && <details className="exam-language-help"><summary>{tr(language, "Deutsche Verständnishilfe", "German comprehension help")}</summary><p>{block.helpDe}</p></details>}
       <ExamAidPanel subject={activeMode.subject} language={language} progress={progress} setProgress={setProgress} />
 
       {block.responseType === "choice" ? <div className="options">{block.options?.map((option, optionIndex) => {
@@ -316,7 +362,9 @@ export function ExamWorkspace({
         const correct = reviewing && block.correctOption === optionIndex;
         const wrong = reviewing && selected && !correct;
         return <button key={option} disabled={reviewing} className={`${selected ? "selected" : ""} ${correct ? "correct" : ""} ${wrong ? "incorrect" : ""}`} onClick={() => answer(optionIndex)}><span>{String.fromCharCode(65 + optionIndex)}</span>{option}</button>;
-      })}</div> : <label className="exam-answer-field"><span>{tr(language, "Deine strukturierte Antwort", "Your structured answer")}</span><textarea disabled={reviewing} rows={12} value={String(session.answers[block.id] ?? "")} onChange={(event) => answer(event.target.value)} placeholder={tr(language, "Ansatz, Norm/Formel, Rechenweg, Ergebnis und Interpretation …", "Approach, rule/formula, calculation, result and interpretation …")} /></label>}
+      })}</div> : block.responseType === "diagram"
+        ? <TaxDiagramAnswerEditor language={language} disabled={reviewing} value={(session.answers[block.id] as TaxDiagramAnswer | undefined) ?? { nodes: [], edges: [] }} onChange={answer} />
+        : <label className="exam-answer-field"><span>{tr(language, "Deine strukturierte Antwort", "Your structured answer")}</span><textarea disabled={reviewing} rows={12} value={String(session.answers[block.id] ?? "")} onChange={(event) => answer(event.target.value)} placeholder={tr(language, "Ansatz, Norm/Formel, Rechenweg, Ergebnis und Interpretation …", "Approach, rule/formula, calculation, result and interpretation …")} /></label>}
 
       <label className="scratchpad"><b>{tr(language, "Freies Rechenblatt", "Scratchpad")}</b><textarea disabled={reviewing} rows={5} value={session.scratchpads?.[block.id] ?? ""} onChange={(event) => scratch(event.target.value)} placeholder={tr(language, "Zwischenschritte und Notizen …", "Intermediate steps and notes …")} /></label>
 
@@ -326,7 +374,7 @@ export function ExamWorkspace({
       </div> : <div className="exam-rubric">
         <h2>{tr(language, "Teilpunkte-Rubrik", "Partial-credit rubric")}</h2>
         <ul>{block.rubric.map((item) => <li key={item.label}><span>{item.label}</span><b>{item.points} P</b></li>)}</ul>
-        <details className="model-answer" open><summary>{tr(language, "Musterlösung", "Model answer")}</summary><p>{block.modelAnswer}</p></details>
+        <details className="model-answer" open><summary>{tr(language, "Musterlösung", "Model answer")}</summary><p>{block.modelAnswer}</p>{block.modelDiagram && <TaxDiagramPreview language={language} value={block.modelDiagram} />}</details>
         {block.responseType === "choice"
           ? <p className="auto-score">{tr(language, "Automatisch bewertet", "Automatically graded")}: <strong>{effectiveScore(block)}/{block.points} P</strong></p>
           : <label className="self-score">{tr(language, "Vergebene Teilpunkte", "Awarded partial credit")}<input type="number" min="0" max={block.points} value={Object.hasOwn(session.selfScores ?? {}, block.id) ? session.selfScores?.[block.id] : ""} onChange={(event) => scoreBlock(event.target.value === "" ? undefined : Number(event.target.value))} placeholder="–" /><b>/ {block.points}</b></label>}

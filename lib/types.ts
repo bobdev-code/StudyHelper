@@ -173,6 +173,11 @@ export type TaxDiagramEdge = {
   relation: "participation" | "rental" | "loan" | "dividend";
 };
 
+export type TaxDiagramAnswer = {
+  nodes: TaxDiagramNode[];
+  edges: TaxDiagramEdge[];
+};
+
 export type SavedTaxDiagram = {
   id: string;
   name: string;
@@ -181,21 +186,26 @@ export type SavedTaxDiagram = {
   updatedAt: string;
 };
 
+export type ExamAnswer = number | number[] | string | TaxDiagramAnswer;
+
 export type ExamSession = {
   id: string;
   subject: Subject;
   examModeId?: ExamModeId;
+  examVariantId?: string;
   durationMinutes?: number;
   startedAt: string;
   updatedAt?: string;
   completedAt?: string;
   currentBlockId?: string;
+  currentBlockStartedAt?: string;
   questionIds: string[];
-  answers: Record<string, number | number[] | string>;
+  answers: Record<string, ExamAnswer>;
   confidences: Record<string, Confidence>;
   markedQuestionIds?: string[];
   scratchpads?: Record<string, string>;
   selfScores?: Record<string, number>;
+  blockDurationsMs?: Record<string, number>;
   score?: number;
   maxScore?: number;
 };

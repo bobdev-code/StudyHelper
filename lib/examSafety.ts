@@ -1,9 +1,13 @@
 export type ExamSafetyBlock = {
   id: string;
-  responseType: "choice" | "text";
+  responseType: "choice" | "text" | "diagram";
 };
 
 export function isExamAnswerComplete(value: unknown) {
+  if (value && typeof value === "object" && "nodes" in value && "edges" in value) {
+    const diagram = value as { nodes?: unknown[]; edges?: unknown[] };
+    return (diagram.nodes?.length ?? 0) >= 2 && (diagram.edges?.length ?? 0) >= 1;
+  }
   return typeof value === "string" ? value.trim().length > 0 : value !== undefined;
 }
 
@@ -13,7 +17,7 @@ export function unansweredExamBlockIds(blocks: ExamSafetyBlock[], answers: Recor
 
 export function ungradedTextBlockIds(blocks: ExamSafetyBlock[], selfScores: Record<string, number> | undefined) {
   return blocks
-    .filter((item) => item.responseType === "text" && !Object.hasOwn(selfScores ?? {}, item.id))
+    .filter((item) => item.responseType !== "choice" && !Object.hasOwn(selfScores ?? {}, item.id))
     .map((item) => item.id);
 }
 
@@ -30,7 +34,7 @@ export function firstResumeBlockIndex(
   currentBlockId?: string,
 ) {
   const preferred = reviewing
-    ? blocks.findIndex((item) => item.responseType === "text" && !Object.hasOwn(selfScores ?? {}, item.id))
+    ? blocks.findIndex((item) => item.responseType !== "choice" && !Object.hasOwn(selfScores ?? {}, item.id))
     : blocks.findIndex((item) => !isExamAnswerComplete(answers[item.id]));
   if (preferred >= 0) return preferred;
   const saved = blocks.findIndex((item) => item.id === currentBlockId);

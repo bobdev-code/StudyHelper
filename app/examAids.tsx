@@ -9,6 +9,7 @@ import type {
   Language,
   SavedTaxDiagram,
   Subject,
+  TaxDiagramAnswer,
   TaxDiagramEdge,
   TaxDiagramNode,
 } from "@/lib/types";
@@ -166,6 +167,100 @@ function DiagramNodeShape({ node, selected, onSelect }: { node: DiagramNode; sel
   </g>;
 }
 
+function TaxDiagramCanvas({
+  language,
+  nodes,
+  edges,
+  selected = [],
+  onSelect,
+}: {
+  language: Language;
+  nodes: DiagramNode[];
+  edges: DiagramEdge[];
+  selected?: number[];
+  onSelect?: (id: number) => void;
+}) {
+  const markerId = onSelect ? "answer-arrow" : "preview-arrow";
+  return <svg className="tax-diagram-canvas" viewBox="0 0 640 340" aria-label={tr(language, "Steuerzeichnung", "Tax diagram")}>
+    <defs><marker id={markerId} markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" /></marker></defs>
+    {edges.map((edge) => {
+      const from = nodes.find((item) => item.id === edge.from);
+      const to = nodes.find((item) => item.id === edge.to);
+      if (!from || !to) return null;
+      const midX = (from.x + to.x) / 2;
+      const midY = (from.y + to.y) / 2;
+      return <g className="diagram-edge" key={edge.id}><line x1={from.x} y1={from.y} x2={to.x} y2={to.y} markerEnd={`url(#${markerId})`} /><rect x={midX - 58} y={midY - 12} width="116" height="20" rx="8" /><text x={midX} y={midY + 2} textAnchor="middle">{tr(language, relationLabels[edge.relation].de, relationLabels[edge.relation].en)}</text></g>;
+    })}
+    {nodes.map((node) => <DiagramNodeShape key={node.id} node={node} selected={selected.includes(node.id)} onSelect={() => onSelect?.(node.id)} />)}
+    {!nodes.length && <text className="diagram-empty" x="320" y="170" textAnchor="middle">{tr(language, "Vorlage wählen oder Symbole hinzufügen", "Choose a template or add symbols")}</text>}
+  </svg>;
+}
+
+function materializeTemplate(id: keyof typeof diagramTemplates, language: Language): TaxDiagramAnswer {
+  const template = diagramTemplates[id];
+  return {
+    nodes: template.nodes.map(({ labelEn, ...item }, index) => ({ ...item, label: tr(language, item.label, labelEn), id: index + 1 })),
+    edges: template.edges.map((item, index) => ({ ...item, id: index + 1 })),
+  };
+}
+
+export function TaxDiagramAnswerEditor({
+  language,
+  value,
+  onChange,
+  disabled = false,
+}: {
+  language: Language;
+  value: TaxDiagramAnswer;
+  onChange: (answer: TaxDiagramAnswer) => void;
+  disabled?: boolean;
+}) {
+  const [selected, setSelected] = useState<number[]>([]);
+  const [relation, setRelation] = useState<DiagramRelation>("participation");
+  const addNode = (kind: DiagramNodeKind) => {
+    const id = Math.max(0, ...value.nodes.map((item) => item.id)) + 1;
+    const [x, y] = positions[value.nodes.length % positions.length];
+    onChange({ ...value, nodes: [...value.nodes, { id, kind, x, y, label: tr(language, nodeLabels[kind].de, nodeLabels[kind].en) }] });
+  };
+  const toggleNode = (id: number) => setSelected((current) => current.includes(id)
+    ? current.filter((item) => item !== id)
+    : [...current.slice(-1), id]);
+  const connect = () => {
+    if (selected.length !== 2) return;
+    const edge = { id: Math.max(0, ...value.edges.map((item) => item.id)) + 1, from: selected[0], to: selected[1], relation };
+    onChange({ ...value, edges: [...value.edges, edge] });
+    setSelected([]);
+  };
+  const removeSelected = () => {
+    const selectedSet = new Set(selected);
+    onChange({
+      nodes: value.nodes.filter((item) => !selectedSet.has(item.id)),
+      edges: value.edges.filter((item) => !selectedSet.has(item.from) && !selectedSet.has(item.to)),
+    });
+    setSelected([]);
+  };
+
+  return <div className="tax-diagram-builder exam-diagram-answer">
+    {!disabled && <>
+      <div className="diagram-toolbar">
+        <div><small>{tr(language, "Bausteine", "Building blocks")}</small>{(["person", "partnership", "corporation", "building"] as DiagramNodeKind[]).map((kind) => <button key={kind} onClick={() => addNode(kind)}>+ {tr(language, nodeLabels[kind].de, nodeLabels[kind].en)}</button>)}</div>
+        <div><small>{tr(language, "Vorlagen", "Templates")}</small><button onClick={() => onChange(materializeTemplate("partnership", language))}>{tr(language, "Mitunternehmerschaft", "Co-entrepreneurship")}</button><button onClick={() => onChange(materializeTemplate("businessSplit", language))}>{tr(language, "Betriebsaufspaltung", "Business split")}</button><button onClick={() => onChange(materializeTemplate("intercompany", language))}>Intercompany</button></div>
+      </div>
+      <div className="diagram-connect">
+        <select value={relation} onChange={(event) => setRelation(event.target.value as DiagramRelation)}>{(Object.keys(relationLabels) as DiagramRelation[]).map((key) => <option key={key} value={key}>{tr(language, relationLabels[key].de, relationLabels[key].en)}</option>)}</select>
+        <button disabled={selected.length !== 2} onClick={connect}>{tr(language, "Ausgewählte Symbole verbinden", "Connect selected symbols")}</button>
+        <button disabled={!selected.length} onClick={removeSelected}>{tr(language, "Auswahl löschen", "Delete selection")}</button>
+      </div>
+    </>}
+    <TaxDiagramCanvas language={language} nodes={value.nodes} edges={value.edges} selected={selected} onSelect={disabled ? undefined : toggleNode} />
+    {!disabled && <p>{tr(language, "Wähle zwei Symbole nacheinander und verbinde sie. Deine Zeichnung wird mit der Prüfungsantwort gespeichert.", "Select two symbols in sequence and connect them. Your diagram is saved with the exam answer.")}</p>}
+  </div>;
+}
+
+export function TaxDiagramPreview({ language, value }: { language: Language; value: TaxDiagramAnswer }) {
+  return <div className="tax-diagram-builder diagram-preview"><TaxDiagramCanvas language={language} nodes={value.nodes} edges={value.edges} /></div>;
+}
+
 function TaxDiagramBuilder({
   language,
   savedDiagrams,
@@ -196,9 +291,9 @@ function TaxDiagramBuilder({
     setSelected([]);
   };
   const loadTemplate = (id: keyof typeof diagramTemplates) => {
-    const template = diagramTemplates[id];
-    setNodes(template.nodes.map(({ labelEn, ...item }, index) => ({ ...item, label: tr(language, item.label, labelEn), id: index + 1 })));
-    setEdges(template.edges.map((item, index) => ({ ...item, id: index + 1 })));
+    const template = materializeTemplate(id, language);
+    setNodes(template.nodes);
+    setEdges(template.edges);
     setSelected([]);
   };
   const removeSelected = () => {
@@ -245,19 +340,7 @@ function TaxDiagramBuilder({
       <button disabled={selected.length !== 2} onClick={connect}>{tr(language, "Ausgewählte Symbole verbinden", "Connect selected symbols")}</button>
       <button disabled={!selected.length} onClick={removeSelected}>{tr(language, "Auswahl löschen", "Delete selection")}</button>
     </div>
-    <svg className="tax-diagram-canvas" viewBox="0 0 640 340" aria-label={tr(language, "Eigene Steuerzeichnung", "Your tax diagram")}>
-      <defs><marker id="aid-arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" /></marker></defs>
-      {edges.map((edge) => {
-        const from = nodes.find((item) => item.id === edge.from);
-        const to = nodes.find((item) => item.id === edge.to);
-        if (!from || !to) return null;
-        const midX = (from.x + to.x) / 2;
-        const midY = (from.y + to.y) / 2;
-        return <g className="diagram-edge" key={edge.id}><line x1={from.x} y1={from.y} x2={to.x} y2={to.y} markerEnd="url(#aid-arrow)" /><rect x={midX - 58} y={midY - 12} width="116" height="20" rx="8" /><text x={midX} y={midY + 2} textAnchor="middle">{tr(language, relationLabels[edge.relation].de, relationLabels[edge.relation].en)}</text></g>;
-      })}
-      {nodes.map((node) => <DiagramNodeShape key={node.id} node={node} selected={selected.includes(node.id)} onSelect={() => toggleNode(node.id)} />)}
-      {!nodes.length && <text className="diagram-empty" x="320" y="170" textAnchor="middle">{tr(language, "Vorlage wählen oder Symbole hinzufügen", "Choose a template or add symbols")}</text>}
-    </svg>
+    <TaxDiagramCanvas language={language} nodes={nodes} edges={edges} selected={selected} onSelect={toggleNode} />
     <p>{tr(language, "Wähle zwei Symbole nacheinander und verbinde sie. Gespeicherte Zeichnungen bleiben nach Reload und Login erhalten, werden aber bewusst nicht automatisch bewertet.", "Select two symbols in sequence and connect them. Saved drawings persist across reload and login, but are deliberately not auto-graded.")}</p>
     <small className="aid-source">Quelle: German and International Taxation.zip → Copy of German Tax Exam Prep.pdf, S. 1, 4–6.</small>
   </div>;
