@@ -244,6 +244,16 @@ h1,h2,h3,p { margin-top: 0; }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior:auto !important; transition:none !important; } }
 
 .top-actions { width:min(100% - 54px,1100px); margin:14px auto 0; display:flex; justify-content:flex-end; align-items:center; gap:10px; }
+.pwa-controls { display:flex; align-items:center; gap:8px; }
+.pwa-action,.offline-pill,.pwa-install-help { border:1px solid var(--line); border-radius:999px; background:var(--surface); color:var(--ink); font:inherit; font-size:.78rem; font-weight:750; padding:8px 12px; }
+.pwa-action { cursor:pointer; }
+.pwa-action:hover { border-color:var(--coral); color:var(--coral); }
+.offline-pill { display:flex; align-items:center; gap:7px; }
+.offline-pill i { width:7px; height:7px; border-radius:50%; background:#c85b3b; }
+.pwa-install-help { position:relative; }
+.pwa-install-help summary { cursor:pointer; list-style:none; }
+.pwa-install-help span { position:absolute; top:calc(100% + 8px); right:0; width:240px; padding:12px; border:1px solid var(--line); border-radius:12px; background:var(--surface); box-shadow:var(--shadow); line-height:1.45; }
+.view-loader { min-height:180px; display:grid; place-items:center; color:var(--muted); font-weight:700; }
 .language-switch { display:flex; gap:4px; padding:4px; border:1px solid var(--line); border-radius:10px; background:white; }
 .language-switch button { display:flex; align-items:center; gap:6px; min-height:34px; padding:6px 9px; border:0; border-radius:7px; background:transparent; color:var(--muted); font-weight:800; cursor:pointer; }
 .language-switch button.active { background:var(--navy); color:white; }
@@ -260,6 +270,8 @@ h1,h2,h3,p { margin-top: 0; }
 
 @media (max-width:760px) {
   .top-actions { width:calc(100% - 28px); margin-top:10px; flex-wrap:wrap; justify-content:flex-start; }.subject-switcher { width:100%; overflow:auto; }.subject-switcher button { flex:1 0 auto; }.account-button { display:none; }.mobile-account-button { display:grid; }.language-switch { margin-left:auto; }.auth-dialog { padding:25px 20px; }
+  .pwa-controls { position:fixed; left:12px; right:12px; bottom:12px; z-index:80; justify-content:center; pointer-events:none; }
+  .pwa-controls > * { pointer-events:auto; box-shadow:0 10px 35px rgb(7 30 53 / 14%); }
   .sidebar.open { z-index:31; }
   .nav-backdrop { position:fixed; inset:0; z-index:30; display:block; border:0; background:rgba(8,23,37,.54); }
   .adaptive-layout { grid-template-columns:1fr; }
