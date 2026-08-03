@@ -29,7 +29,7 @@ import type {
 } from "@/lib/types";
 import { createLabTasks, labErrorByStage, type LabTask } from "@/lib/data/calculationLab";
 import { taxCases, taxCaseErrorByStep, type TaxCase } from "@/lib/data/taxCaseLab";
-import { getRememberMe, getSupabase, setRememberMe } from "@/lib/supabase";
+import { getEmailRedirectTo, getRememberMe, getSupabase, setRememberMe } from "@/lib/supabase";
 import {
   adaptiveQueue,
   averageSubjectMastery,
@@ -521,7 +521,14 @@ function AuthDialog({ user, language, onClose }: { user: User | null; language: 
     const supabase = getSupabase();
     const result = mode === "login"
       ? await supabase.auth.signInWithPassword({ email, password })
-      : await supabase.auth.signUp({ email, password, options: { data: { display_name: displayName } } });
+      : await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: { display_name: displayName },
+          emailRedirectTo: getEmailRedirectTo(),
+        },
+      });
     setBusy(false);
     if (result.error) setMessage(result.error.message);
     else if (mode === "signup" && !result.data.session) setMessage(tr(language,"Bitte bestätige die E-Mail und melde dich danach an.","Please confirm the email, then sign in."));
