@@ -1,6 +1,6 @@
 # Nachprüfung Lerntrainer 2026
 
-Responsive Lernapp für die Prüfungen **Portfolio Management** und **German & International Taxation** am 04.08.2026.
+Responsive Lernapp für die Prüfungen **Portfolio Management** und **German & International Taxation** am 04.08.2026. Sie bündelt quellengebundene Karteikarten, Quizfragen, Rechenfälle und Prüfungssimulationen mit Fehlerprotokoll und Lernplanung an einem Ort. Die App läuft als installierbare PWA auch offline und kann den Lernstand optional über ein Supabase-Konto geräteübergreifend synchronisieren.
 
 ## Start
 
